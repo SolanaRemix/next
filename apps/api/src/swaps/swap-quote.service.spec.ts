@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { SwapQuoteService } from './swap-quote.service.js';
 
 const request = {
@@ -73,7 +73,7 @@ describe('SwapQuoteService', () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
 
-    await expect(service.quote({ ...request, buyToken: request.sellToken })).rejects.toThrow(/different/);
+    await expect(service.quote({ ...request, buyToken: request.sellToken })).rejects.toBeInstanceOf(BadRequestException);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

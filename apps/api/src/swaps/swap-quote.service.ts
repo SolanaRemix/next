@@ -1,4 +1,4 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import type {
   EvmQuoteProvider,
   SwapQuoteRequest,
@@ -171,7 +171,7 @@ export class SwapQuoteService {
 
   async quote(request: SwapQuoteRequest): Promise<SwapQuoteResponse> {
     if (request.sellToken.toLowerCase() === request.buyToken.toLowerCase()) {
-      throw new Error('Sell and buy tokens must be different.');
+      throw new BadRequestException('Sell and buy tokens must be different.');
     }
     const outcomes = await Promise.allSettled(
       this.providers.map(async (provider) => ({
