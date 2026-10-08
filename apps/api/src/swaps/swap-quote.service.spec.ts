@@ -25,11 +25,11 @@ describe('SwapQuoteService', () => {
   it('compares aggregator output, ranks the best quote, and derives minimum output', async () => {
     process.env.ONEINCH_API_KEY = 'test-key';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes('api.0x.org')) {
+      const hostname = new URL(String(input)).hostname;
+      if (hostname === 'api.0x.org') {
         return Response.json({ buyAmount: '1000', gas: '21000' });
       }
-      if (url.includes('1inch.dev')) {
+      if (hostname === 'api.1inch.dev') {
         return Response.json({ dstAmount: '1200', gas: 22000 });
       }
       return Response.json({ priceRoute: { destAmount: '1100', gasCost: '23000' } });
