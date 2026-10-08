@@ -68,3 +68,33 @@ export interface PerpetualRiskCheckResult {
   unrealizedPnlAtMark: number;
   maintenanceMarginAtMark: number;
 }
+
+export type EvmQuoteProvider = "0x" | "1inch" | "paraswap";
+
+export interface SwapQuoteRequest {
+  chainId: number;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  sellDecimals: number;
+  buyDecimals: number;
+  maxSlippageBps: number;
+}
+
+export interface SwapRouteQuote {
+  provider: EvmQuoteProvider;
+  buyAmount: string;
+  minimumBuyAmount: string;
+  estimatedGas?: string;
+}
+
+export interface SwapQuoteResponse {
+  chainId: number;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  maxSlippageBps: number;
+  routes: SwapRouteQuote[];
+  unavailableProviders: EvmQuoteProvider[];
+  quotedAt: string;
+}

@@ -5,6 +5,7 @@ import { backendOnboardingStore, localOnboardingStore } from "./onboarding/onboa
 import { WalletPanel } from "./wallet/WalletPanel";
 import { useWallet } from "./wallet/WalletContext";
 import { PerpetualTradingPanel } from "./perpetuals/PerpetualTradingPanel";
+import { SwapPanel } from "./swaps/SwapPanel";
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -39,6 +40,9 @@ export function App() {
       </div>
       <section className="perpetual-section" aria-label="Perpetual trading risk check">
         <PerpetualTradingPanel />
+      </section>
+      <section className="perpetual-section" aria-label="Multi-aggregator swap quote">
+        <SwapPanel />
       </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>
       <Onboarding

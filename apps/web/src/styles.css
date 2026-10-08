@@ -42,6 +42,19 @@ button { color: inherit; }
 .transfer-form input:focus, .invite-input input:focus { border-color: var(--brand-orange); outline: 2px solid rgba(255, 87, 34, 0.25); }
 .wallet-disclaimer { color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; margin: 18px 0 0; }
 .perpetual-section { margin-top: 24px; }
+.swap-panel { padding: 25px; }
+.swap-form { display: grid; gap: 13px; }
+.swap-form > label, .swap-form__row label { color: var(--text-muted); display: grid; font-size: 0.86rem; gap: 7px; min-width: 0; }
+.swap-form input, .swap-form select { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); min-height: 44px; padding: 0 12px; width: 100%; }
+.swap-form input:focus, .swap-form select:focus { border-color: var(--brand-orange); outline: 2px solid rgba(255, 87, 34, 0.25); }
+.swap-form__row { display: grid; gap: 13px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.swap-result { background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; margin-top: 18px; padding: 17px; }
+.swap-result > .muted:first-child { margin-top: 0; }
+.swap-route { border-top: 1px solid rgba(255, 255, 255, 0.08); display: grid; gap: 9px; padding: 13px 0; }
+.swap-route > div { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; }
+.swap-route > div:nth-child(2) { align-items: baseline; }
+.swap-route > div:nth-child(2) > span:first-child { font-weight: 700; }
+.swap-route small { font-size: 0.75rem; }
 .perpetual-panel { padding: 25px; }
 .perpetual-form { display: grid; gap: 18px; }
 .trade-toggle { background: rgba(0, 0, 0, 0.28); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; display: grid; gap: 6px; grid-template-columns: 1fr 1fr; padding: 5px; }
