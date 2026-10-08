@@ -4,6 +4,7 @@
     { "path": "./packages/types" },
     { "path": "./packages/config" },
     { "path": "./packages/ui" },
-    { "path": "./apps/web" }
+    { "path": "./apps/web" },
+    { "path": "./apps/api" }
   ]
 }

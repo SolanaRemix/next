@@ -4,6 +4,7 @@ import { Onboarding } from "./onboarding/Onboarding";
 import { backendOnboardingStore, localOnboardingStore } from "./onboarding/onboardingStore";
 import { WalletPanel } from "./wallet/WalletPanel";
 import { useWallet } from "./wallet/WalletContext";
+import { PerpetualTradingPanel } from "./perpetuals/PerpetualTradingPanel";
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -36,6 +37,9 @@ export function App() {
           <p className="muted">This client does not request, store, or transmit private keys or recovery phrases. All transfers require wallet approval.</p>
         </GlassCard>
       </div>
+      <section className="perpetual-section" aria-label="Perpetual trading risk check">
+        <PerpetualTradingPanel />
+      </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>
       <Onboarding
         store={onboardingStore}

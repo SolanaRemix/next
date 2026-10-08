@@ -9,8 +9,9 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @next/web",
-    "build": "npm run build --workspace @next/web",
-    "test": "npm run test --workspace @next/web",
+    "dev:api": "npm run start:dev --workspace @next/api",
+    "build": "npm run typecheck && npm run build --workspace @next/web && npm run build --workspace @next/api",
+    "test": "npm run test --workspace @next/web && npm run test --workspace @next/api",
     "typecheck": "tsc --build"
   },
   "devDependencies": {
@@ -29,6 +30,9 @@
     "jayson": {
       "stream-json": "3.7.0",
       "uuid": "11.1.1"
+    },
+    "tsx": {
+      "esbuild": "0.28.2"
     }
   }
 }
