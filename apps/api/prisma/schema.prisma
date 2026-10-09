@@ -31,6 +31,7 @@ model User {
   deletedAt     DateTime?      @map("deleted_at") @db.Timestamptz(6)
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
+  solanaSwapOrders SolanaSwapOrder[]
 
   @@index([role])
   @@index([accountStatus])
@@ -63,4 +64,29 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([action, createdAt])
   @@map("audit_logs")
+}
+
+model SolanaSwapOrder {
+  id                     String   @id @default(uuid()) @db.Uuid
+  userId                 String   @map("user_id") @db.Uuid
+  idempotencyKey         String   @map("idempotency_key") @db.VarChar(36)
+  requestId              String   @unique @map("request_id") @db.VarChar(128)
+  taker                  String   @db.VarChar(44)
+  inputMint              String   @map("input_mint") @db.VarChar(44)
+  outputMint             String   @map("output_mint") @db.VarChar(44)
+  inputAmount            String   @map("input_amount") @db.VarChar(20)
+  orderPayload           Json     @map("order_payload") @db.JsonB
+  expiresAt              DateTime @map("expires_at") @db.Timestamptz(6)
+  executionKey           String?  @map("execution_key") @db.VarChar(36)
+  executionStatus        String   @default("ORDERED") @map("execution_status") @db.VarChar(12)
+  executionResult        Json?    @map("execution_result") @db.JsonB
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey])
+  @@unique([userId, executionKey])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("solana_swap_orders")
 }

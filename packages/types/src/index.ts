@@ -100,6 +100,42 @@ export interface SwapQuoteResponse {
   quotedAt: string;
 }
 
+export interface SolanaSwapOrderRequest {
+  inputMint: string;
+  outputMint: string;
+  amount: string;
+  taker: string;
+  idempotencyKey: string;
+}
+
+export interface SolanaSwapOrderResponse {
+  executionId: string;
+  requestId: string;
+  transaction: string;
+  inputMint: string;
+  outputMint: string;
+  inAmount: string;
+  outAmount: string;
+  minimumOutputAmount: string;
+  slippageBps: number;
+  prioritizationFeeLamports: number | null;
+  router: string | null;
+  expiresAt: string;
+}
+
+export interface SolanaSwapExecuteRequest {
+  executionId: string;
+  requestId: string;
+  signedTransaction: string;
+  idempotencyKey: string;
+}
+
+export interface SolanaSwapExecuteResponse {
+  status: "processing" | "success" | "failed";
+  signature: string | null;
+  error: string | null;
+}
+
 export interface SolanaMarketToken {
   mint: string;
   name: string;
