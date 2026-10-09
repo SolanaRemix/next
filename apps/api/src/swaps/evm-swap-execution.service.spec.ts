@@ -217,9 +217,11 @@ describe('EvmSwapExecutionService', () => {
           status: '0x1',
           transactionHash,
           blockNumber: '0x10',
+          blockHash: `0x${'b'.repeat(64)}`,
         } });
       }
-      return Response.json({ result: '0x11' });
+      if (body.method === 'eth_blockNumber') return Response.json({ result: '0x1b' });
+      return Response.json({ result: { hash: `0x${'b'.repeat(64)}` } });
     });
     vi.stubGlobal('fetch', fetch);
 
@@ -235,6 +237,7 @@ describe('EvmSwapExecutionService', () => {
       'eth_getTransactionByHash',
       'eth_getTransactionReceipt',
       'eth_blockNumber',
+      'eth_getBlockByNumber',
     ]);
     expect(prisma.evmSwapOrder.updateMany).toHaveBeenCalledTimes(2);
     expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -247,6 +250,98 @@ describe('EvmSwapExecutionService', () => {
         }),
       }),
     }));
+  });
+
+  it('keeps a transaction processing until the configured confirmation depth', async () => {
+    prisma.evmSwapOrder.findFirst
+      .mockResolvedValueOnce(orderRow)
+      .mockResolvedValueOnce({ ...orderRow, executionStatus: 'SUBMITTED', transactionHash });
+    prisma.evmSwapOrder.updateMany.mockResolvedValue({ count: 1 });
+    vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      if (body.method === 'eth_chainId') return Response.json({ result: '0x1' });
+      if (body.method === 'eth_getTransactionByHash') {
+        return Response.json({ result: {
+          from: taker,
+          to: txTo,
+          input: txData,
+          value: '0x0',
+        } });
+      }
+      if (body.method === 'eth_getTransactionReceipt') {
+        return Response.json({ result: {
+          status: '0x1',
+          transactionHash,
+          blockNumber: '0x10',
+          blockHash: `0x${'b'.repeat(64)}`,
+        } });
+      }
+      if (body.method === 'eth_blockNumber') return Response.json({ result: '0x1a' });
+      return Response.json({ result: { hash: `0x${'b'.repeat(64)}` } });
+    }));
+
+    await expect(service.execute('user-1', {
+      executionId,
+      transactionHash,
+      idempotencyKey,
+    })).resolves.toEqual({ status: 'processing', transactionHash, error: null });
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('reopens a previously settled order if its receipt is no longer canonical', async () => {
+    prisma.evmSwapOrder.findFirst.mockResolvedValue({
+      ...orderRow,
+      executionStatus: 'SUCCEEDED',
+      transactionHash,
+      executionResult: { status: 'success', transactionHash, error: null },
+    });
+    prisma.evmSwapOrder.updateMany.mockResolvedValue({ count: 1 });
+    vi.stubGlobal('fetch', vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      if (body.method === 'eth_chainId') return Response.json({ result: '0x1' });
+      if (body.method === 'eth_getTransactionReceipt') {
+        return Response.json({ result: {
+          status: '0x1',
+          transactionHash,
+          blockNumber: '0x10',
+          blockHash: `0x${'b'.repeat(64)}`,
+        } });
+      }
+      if (body.method === 'eth_blockNumber') return Response.json({ result: '0x30' });
+      return Response.json({ result: { hash: `0x${'c'.repeat(64)}` } });
+    }));
+
+    await expect(service.status('user-1', executionId)).resolves.toEqual({
+      status: 'processing',
+      transactionHash,
+      error: null,
+    });
+    expect(prisma.evmSwapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ executionStatus: 'SUCCEEDED' }),
+      data: expect.objectContaining({ executionStatus: 'SUBMITTED' }),
+    }));
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'swap.evm.settlement.reopened',
+        metadata: expect.objectContaining({ reason: 'noncanonical_receipt' }),
+      }),
+    }));
+  });
+
+  it('rejects submission of a transaction for an expired unsubmitted order', async () => {
+    prisma.evmSwapOrder.findFirst.mockResolvedValueOnce({
+      ...orderRow,
+      expiresAt: new Date(Date.now() - 1),
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(service.execute('user-1', {
+      executionId,
+      transactionHash,
+      idempotencyKey,
+    })).rejects.toThrow(/expired/);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('rejects a transaction whose calldata differs from the persisted 0x order', async () => {

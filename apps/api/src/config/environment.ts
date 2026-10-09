@@ -113,27 +113,41 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
   }
   const supportedEvmChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
   for (const [key, value] of Object.entries(config)) {
-    if (!key.startsWith('EVM_RPC_URL_') || value === undefined || value === '') continue;
-    const chainId = key.slice('EVM_RPC_URL_'.length);
-    if (!supportedEvmChainIds.has(chainId) || typeof value !== 'string') {
-      throw new Error(`${key} must configure a supported EVM chain endpoint.`);
-    }
-    try {
-      const endpoint = new URL(value);
-      const localHttpEndpoint = config.NODE_ENV !== 'production' &&
-        endpoint.protocol === 'http:' &&
-        ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
-      if (
-        (!localHttpEndpoint && endpoint.protocol !== 'https:') ||
-        !endpoint.hostname ||
-        endpoint.username ||
-        endpoint.password ||
-        endpoint.hash
-      ) {
+    if (key.startsWith('EVM_RPC_URL_') && value !== undefined && value !== '') {
+      const chainId = key.slice('EVM_RPC_URL_'.length);
+      if (!supportedEvmChainIds.has(chainId) || typeof value !== 'string') {
+        throw new Error(`${key} must configure a supported EVM chain endpoint.`);
+      }
+      try {
+        const endpoint = new URL(value);
+        const localHttpEndpoint = config.NODE_ENV !== 'production' &&
+          endpoint.protocol === 'http:' &&
+          ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
+        if (
+          (!localHttpEndpoint && endpoint.protocol !== 'https:') ||
+          !endpoint.hostname ||
+          endpoint.username ||
+          endpoint.password ||
+          endpoint.hash
+        ) {
+          throw new Error(`${key} must be an HTTPS endpoint.`);
+        }
+      } catch {
         throw new Error(`${key} must be an HTTPS endpoint.`);
       }
-    } catch {
-      throw new Error(`${key} must be an HTTPS endpoint.`);
+    }
+    if (key.startsWith('EVM_CONFIRMATIONS_') && value !== undefined && value !== '') {
+      const chainId = key.slice('EVM_CONFIRMATIONS_'.length);
+      const confirmations = typeof value === 'string' ? Number(value) : value;
+      if (
+        !supportedEvmChainIds.has(chainId) ||
+        (typeof value === 'string' && !/^\d{1,4}$/.test(value)) ||
+        !Number.isInteger(confirmations) ||
+        Number(confirmations) < 2 ||
+        Number(confirmations) > 1000
+      ) {
+        throw new Error(`${key} must be an integer between 2 and 1000.`);
+      }
     }
   }
   return config;

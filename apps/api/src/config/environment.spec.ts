@@ -109,5 +109,17 @@ describe('validateEnvironment', () => {
     ...validConfig,
     EVM_RPC_URL_1: '******rpc.example.com',
     })).toThrow(/EVM_RPC_URL_1/);
+    expect(validateEnvironment({
+    ...validConfig,
+    EVM_CONFIRMATIONS_1: '12',
+    })).toMatchObject({ EVM_CONFIRMATIONS_1: '12' });
+    expect(() => validateEnvironment({
+    ...validConfig,
+    EVM_CONFIRMATIONS_1: '1',
+    })).toThrow(/between 2 and 1000/);
+    expect(() => validateEnvironment({
+    ...validConfig,
+    EVM_CONFIRMATIONS_1: '1e2',
+    })).toThrow(/between 2 and 1000/);
   });
 });

@@ -23,6 +23,15 @@ const requestTimeoutMs = 12_000;
 const supportedChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const hashPattern = /^0x[a-fA-F0-9]{64}$/;
+const confirmationDepth: Record<number, number> = {
+  1: 12,
+  10: 20,
+  56: 15,
+  137: 128,
+  8453: 20,
+  42161: 20,
+  43114: 12,
+};
 
 interface EvmTransaction {
   to: string;
@@ -229,21 +238,20 @@ export class EvmSwapExecutionService {
       throw new ConflictException('This swap order is already bound to another transaction.');
     }
     if (row.executionStatus === 'SUCCEEDED' || row.executionStatus === 'FAILED') {
-      return parseSavedResult(row.executionResult) ??
-        { status: 'processing', transactionHash: row.transactionHash, error: null };
+      if (!row.transactionHash) {
+        return parseSavedResult(row.executionResult) ??
+          { status: 'processing', transactionHash: null, error: null };
+      }
+      const terminalRpcUrl = this.getRpcUrl(row.chainId);
+      await this.assertRpcChain(terminalRpcUrl, row.chainId);
+      return this.reconcile(terminalRpcUrl, row);
+    }
+    if (row.executionStatus === 'ORDERED' && row.expiresAt.getTime() <= Date.now()) {
+      throw new ConflictException('EVM swap order expired. Request a fresh order.');
     }
 
-    const rpcUrl = this.config.get<string>(`EVM_RPC_URL_${row.chainId}`);
-    if (!rpcUrl) {
-      throw new ServiceUnavailableException(`EVM_RPC_URL_${row.chainId} is required to verify settlement.`);
-    }
-    const chainId = await this.rpc(rpcUrl, 'eth_chainId', []);
-    if (
-      typeof chainId !== 'string' || !/^0x[0-9a-f]+$/i.test(chainId) ||
-      BigInt(chainId) !== BigInt(row.chainId)
-    ) {
-      throw new ServiceUnavailableException('Configured EVM RPC endpoint returned the wrong chain.');
-    }
+    const rpcUrl = this.getRpcUrl(row.chainId);
+    await this.assertRpcChain(rpcUrl, row.chainId);
     const transaction = await this.rpc(rpcUrl, 'eth_getTransactionByHash', [request.transactionHash]);
     if (transaction === null) {
       throw new ServiceUnavailableException('Transaction is not visible on the configured EVM RPC yet.');
@@ -275,15 +283,11 @@ export class EvmSwapExecutionService {
   async status(userId: string, executionId: string): Promise<EvmSwapExecuteResponse> {
     const row = await this.prisma.evmSwapOrder.findFirst({ where: { id: executionId, userId } });
     if (!row) throw new NotFoundException('EVM swap order was not found.');
-    const saved = parseSavedResult(row.executionResult);
-    if (saved && saved.status !== 'processing') return saved;
     if (!row.transactionHash || row.executionStatus === 'ORDERED') {
       return { status: 'processing', transactionHash: row.transactionHash, error: null };
     }
-    const rpcUrl = this.config.get<string>(`EVM_RPC_URL_${row.chainId}`);
-    if (!rpcUrl) {
-      throw new ServiceUnavailableException(`EVM_RPC_URL_${row.chainId} is required to verify settlement.`);
-    }
+    const rpcUrl = this.getRpcUrl(row.chainId);
+    await this.assertRpcChain(rpcUrl, row.chainId);
     return this.reconcile(rpcUrl, row);
   }
 
@@ -371,16 +375,18 @@ export class EvmSwapExecutionService {
     executionStatus: string;
     transactionHash: string | null;
   }): Promise<EvmSwapExecuteResponse> {
-    if (!row.transactionHash) {
+    const transactionHash = row.transactionHash;
+    if (!transactionHash) {
       return { status: 'processing', transactionHash: null, error: null };
     }
-    const receipt = await this.rpc(rpcUrl, 'eth_getTransactionReceipt', [row.transactionHash]);
+    const receipt = await this.rpc(rpcUrl, 'eth_getTransactionReceipt', [transactionHash]);
     if (receipt === null) {
-      return { status: 'processing', transactionHash: row.transactionHash, error: null };
+      await this.reopenSettlement({ ...row, transactionHash }, 'receipt_unavailable');
+      return { status: 'processing', transactionHash, error: null };
     }
     if (!isRecord(receipt) || typeof receipt.status !== 'string' ||
       typeof receipt.transactionHash !== 'string' ||
-      receipt.transactionHash.toLowerCase() !== row.transactionHash.toLowerCase()) {
+      receipt.transactionHash.toLowerCase() !== transactionHash.toLowerCase()) {
       throw new ServiceUnavailableException('EVM RPC returned an invalid transaction receipt.');
     }
     if (receipt.status !== '0x1' && receipt.status !== '0x0') {
@@ -390,28 +396,45 @@ export class EvmSwapExecutionService {
     const latestBlock = await this.rpc(rpcUrl, 'eth_blockNumber', []);
     if (
       typeof includedBlock !== 'string' || !/^0x[0-9a-f]+$/i.test(includedBlock) ||
-      typeof latestBlock !== 'string' || !/^0x[0-9a-f]+$/i.test(latestBlock)
+      typeof latestBlock !== 'string' || !/^0x[0-9a-f]+$/i.test(latestBlock) ||
+      typeof receipt.blockHash !== 'string' || !hashPattern.test(receipt.blockHash)
     ) {
       throw new ServiceUnavailableException('EVM RPC returned an invalid block height.');
     }
-    if (BigInt(latestBlock) < BigInt(includedBlock) + 1n) {
-      return { status: 'processing', transactionHash: row.transactionHash, error: null };
+    const canonicalBlock = await this.rpc(rpcUrl, 'eth_getBlockByNumber', [includedBlock, false]);
+    if (
+      !isRecord(canonicalBlock) ||
+      typeof canonicalBlock.hash !== 'string' ||
+      canonicalBlock.hash.toLowerCase() !== receipt.blockHash.toLowerCase()
+    ) {
+      await this.reopenSettlement({ ...row, transactionHash }, 'noncanonical_receipt');
+      return { status: 'processing', transactionHash, error: null };
+    }
+    const requiredConfirmations = this.confirmationsFor(row.chainId);
+    if (
+      BigInt(latestBlock) < BigInt(includedBlock) ||
+      BigInt(latestBlock) - BigInt(includedBlock) + 1n < BigInt(requiredConfirmations)
+    ) {
+      await this.reopenSettlement({ ...row, transactionHash }, 'confirmation_depth_lost');
+      return { status: 'processing', transactionHash, error: null };
     }
     const response: EvmSwapExecuteResponse = {
       status: receipt.status === '0x1' ? 'success' : 'failed',
-      transactionHash: row.transactionHash,
+      transactionHash,
       error: receipt.status === '0x0' ? 'The swap transaction reverted on-chain.' : null,
     };
+    const settledStatus = response.status === 'success' ? 'SUCCEEDED' : 'FAILED';
+    if (row.executionStatus === settledStatus) return response;
     await this.prisma.$transaction(async (transaction) => {
       const updated = await transaction.evmSwapOrder.updateMany({
         where: {
           id: row.id,
           userId: row.userId,
-          transactionHash: row.transactionHash,
-          executionStatus: 'SUBMITTED',
+          transactionHash,
+          executionStatus: row.executionStatus,
         },
         data: {
-          executionStatus: response.status === 'success' ? 'SUCCEEDED' : 'FAILED',
+          executionStatus: settledStatus,
           executionResult: response as unknown as Prisma.InputJsonObject,
         },
       });
@@ -419,7 +442,9 @@ export class EvmSwapExecutionService {
         await transaction.auditLog.create({
           data: {
             actorId: row.userId,
-            action: 'swap.evm.settlement.confirmed',
+            action: row.executionStatus === 'SUBMITTED'
+              ? 'swap.evm.settlement.confirmed'
+              : 'swap.evm.settlement.corrected',
             metadata: {
               executionId: row.id,
               chainId: row.chainId,
@@ -428,7 +453,8 @@ export class EvmSwapExecutionService {
               buyToken: row.buyToken,
               sellAmount: row.sellAmount,
               minimumBuyAmount: row.minimumBuyAmount,
-              transactionHash: row.transactionHash,
+              transactionHash,
+              previousStatus: row.executionStatus,
               outcome: response.status,
             } satisfies Prisma.InputJsonObject,
           },
@@ -436,6 +462,72 @@ export class EvmSwapExecutionService {
       }
     });
     return response;
+  }
+
+  private getRpcUrl(chainId: number): string {
+    const rpcUrl = this.config.get<string>(`EVM_RPC_URL_${chainId}`);
+    if (!rpcUrl) {
+      throw new ServiceUnavailableException(`EVM_RPC_URL_${chainId} is required to verify settlement.`);
+    }
+    return rpcUrl;
+  }
+
+  private async assertRpcChain(rpcUrl: string, expectedChainId: number): Promise<void> {
+    const chainId = await this.rpc(rpcUrl, 'eth_chainId', []);
+    if (
+      typeof chainId !== 'string' || !/^0x[0-9a-f]+$/i.test(chainId) ||
+      BigInt(chainId) !== BigInt(expectedChainId)
+    ) {
+      throw new ServiceUnavailableException('Configured EVM RPC endpoint returned the wrong chain.');
+    }
+  }
+
+  private confirmationsFor(chainId: number): number {
+    const configured = this.config.get<string>(`EVM_CONFIRMATIONS_${chainId}`);
+    if (configured === undefined || configured === '') return confirmationDepth[chainId] ?? 12;
+    if (!/^\d{1,4}$/.test(configured)) {
+      throw new ServiceUnavailableException(`EVM_CONFIRMATIONS_${chainId} is invalid.`);
+    }
+    const confirmations = Number(configured);
+    if (!Number.isInteger(confirmations) || confirmations < 2 || confirmations > 1000) {
+      throw new ServiceUnavailableException(`EVM_CONFIRMATIONS_${chainId} must be between 2 and 1000.`);
+    }
+    return confirmations;
+  }
+
+  private async reopenSettlement(
+    row: { id: string; userId: string; chainId: number; transactionHash: string | null; executionStatus: string },
+    reason: 'receipt_unavailable' | 'noncanonical_receipt' | 'confirmation_depth_lost',
+  ): Promise<void> {
+    const transactionHash = row.transactionHash;
+    if (!transactionHash ||
+      (row.executionStatus !== 'SUCCEEDED' && row.executionStatus !== 'FAILED')) return;
+    await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.evmSwapOrder.updateMany({
+        where: {
+          id: row.id,
+          userId: row.userId,
+          transactionHash,
+          executionStatus: row.executionStatus,
+        },
+        data: { executionStatus: 'SUBMITTED', executionResult: Prisma.DbNull },
+      });
+      if (updated.count === 1) {
+        await transaction.auditLog.create({
+          data: {
+            actorId: row.userId,
+            action: 'swap.evm.settlement.reopened',
+            metadata: {
+              executionId: row.id,
+              chainId: row.chainId,
+              transactionHash,
+              previousStatus: row.executionStatus,
+              reason,
+            } satisfies Prisma.InputJsonObject,
+          },
+        });
+      }
+    });
   }
 
   private matchesTransaction(
