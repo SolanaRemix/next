@@ -208,7 +208,12 @@ describe('SolanaSwapExecutionService', () => {
       executionResult: null,
       updatedAt: new Date(),
     });
-    controls.assertExecutionEnabled.mockRejectedValueOnce(new Error('disabled'));
+    controls.assertExecutionEnabled
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('disabled'));
+    prisma.solanaSwapOrder.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
 
@@ -219,7 +224,14 @@ describe('SolanaSwapExecutionService', () => {
       idempotencyKey,
     })).rejects.toThrow('disabled');
     expect(fetch).not.toHaveBeenCalled();
-    expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
+    expect(prisma.solanaSwapOrder.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.solanaSwapOrder.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        executionStatus: 'ORDERED',
+        executionKey: null,
+        signedTransactionHash: null,
+      }),
+    }));
   });
 
   it('reconciles interrupted execution from the Solana RPC signature status', async () => {

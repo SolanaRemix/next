@@ -232,6 +232,7 @@ export class SolanaSwapExecutionService {
     url.searchParams.set('taker', request.taker);
     url.searchParams.set('maxSupportedTransactionVersion', '0');
     // Omitting slippage and fee overrides delegates RTSE and landing-fee optimization to Jupiter.
+    await this.controls.assertExecutionEnabled();
     const providerOrder = await this.fetchJson(url, {
       method: 'GET',
       headers: { 'x-api-key': apiKey },
@@ -377,6 +378,26 @@ export class SolanaSwapExecutionService {
       throw new ConflictException('This swap order has already been submitted.');
     }
 
+    try {
+      await this.controls.assertExecutionEnabled();
+    } catch (error) {
+      await this.prisma.solanaSwapOrder.updateMany({
+        where: {
+          id: row.id,
+          userId,
+          executionStatus: 'EXECUTING',
+          executionKey: request.idempotencyKey,
+          signedTransactionHash,
+        },
+        data: {
+          executionStatus: 'ORDERED',
+          executionKey: null,
+          transactionSignature: null,
+          signedTransactionHash: null,
+        },
+      });
+      throw error;
+    }
     let providerResult: unknown;
     try {
       providerResult = await this.fetchJson(new URL(`${jupiterBaseUrl}/execute`), {

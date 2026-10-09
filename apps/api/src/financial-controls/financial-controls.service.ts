@@ -41,14 +41,24 @@ export class FinancialControlsService {
     reason: string,
   ): Promise<ExecutionControlState> {
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.financialOperationsControl.upsert({
+        where: { id: controlId },
+        create: { id: controlId, enabled: false },
+        update: {},
+      });
+      await transaction.$queryRaw<{ id: string }[]>`
+        SELECT "id"
+        FROM "financial_operations_controls"
+        WHERE "id" = ${controlId}
+        FOR UPDATE
+      `;
       const previous = await transaction.financialOperationsControl.findUnique({
         where: { id: controlId },
         select: { enabled: true },
       });
-      const control = await transaction.financialOperationsControl.upsert({
+      const control = await transaction.financialOperationsControl.update({
         where: { id: controlId },
-        create: { id: controlId, enabled, updatedBy: actorId },
-        update: { enabled, updatedBy: actorId },
+        data: { enabled, updatedBy: actorId },
       });
       await transaction.auditLog.create({
         data: {

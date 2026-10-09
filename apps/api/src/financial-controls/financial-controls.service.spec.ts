@@ -24,14 +24,19 @@ describe('FinancialControlsService', () => {
     const previous = { enabled: false };
     const updatedAt = new Date('2026-10-09T00:00:00.000Z');
     const findUnique = vi.fn(async () => previous);
-    const upsert = vi.fn(async () => ({
-      enabled: true,
-      updatedAt,
-      updatedBy: 'admin-id',
-    }));
+    const ensureRow = vi.fn(async () => ({}));
     const createAudit = vi.fn(async () => ({}));
     const transaction = {
-      financialOperationsControl: { findUnique, upsert },
+      financialOperationsControl: {
+        findUnique,
+        upsert: ensureRow,
+        update: vi.fn(async () => ({
+          enabled: true,
+          updatedAt,
+          updatedBy: 'admin-id',
+        })),
+      },
+      $queryRaw: vi.fn(async () => [{ id: 'global_execution' }]),
       auditLog: { create: createAudit },
     };
     const prisma = {
@@ -46,11 +51,16 @@ describe('FinancialControlsService', () => {
         updatedAt: updatedAt.toISOString(),
         updatedBy: 'admin-id',
       });
-    expect(upsert).toHaveBeenCalledWith({
+    expect(ensureRow).toHaveBeenCalledWith({
       where: { id: 'global_execution' },
-      create: { id: 'global_execution', enabled: true, updatedBy: 'admin-id' },
-      update: { enabled: true, updatedBy: 'admin-id' },
+      create: { id: 'global_execution', enabled: false },
+      update: {},
     });
+    expect(transaction.financialOperationsControl.update).toHaveBeenCalledWith({
+      where: { id: 'global_execution' },
+      data: { enabled: true, updatedBy: 'admin-id' },
+    });
+    expect(transaction.$queryRaw).toHaveBeenCalledOnce();
     expect(createAudit).toHaveBeenCalledWith({
       data: {
         actorId: 'admin-id',
