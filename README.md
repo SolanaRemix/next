@@ -26,6 +26,12 @@ docker compose up --build
 
 The web app is available at `http://localhost:8080`. Compose requires all seven supported EVM RPC URLs even if a deployment does not expose every chain. The compose file is a single-host deployment baseline; its Redis Cluster has no replica or failover and is not a substitute for managed PostgreSQL/TimescaleDB and a highly available Redis Cluster, backups, TLS termination, secret management, network policy, or multi-replica orchestration.
 
+## Phase 1: core wallet and portfolio (in progress)
+
+Authenticated users can review their 50 most recent refresh sessions in the account panel and revoke active sessions they no longer recognize. The current session is identified without exposing token hashes; revocation is scoped to the authenticated user and audited. Revoking a refresh session prevents future refreshes, but access tokens already issued to that device may remain valid for up to 15 minutes.
+
+Token portfolio balances, token approval discovery/revocation screens, and explicit pre-broadcast transfer simulation remain to be completed in Phase 1. The existing wallet currently reads native balances and asks the wallet to estimate gas and approve native transfers; this is not a full multi-token portfolio or a backend-verified simulation.
+
 ## Local development
 
 Requires Node.js 22 or later and npm.
@@ -78,6 +84,6 @@ The API includes PostgreSQL-backed registration/login, hashed rotating refresh t
 
 Container probes are available at `GET /api/health/live` (process liveness) and `GET /api/health/ready` (PostgreSQL and configured throttle-storage readiness). In development without Redis, readiness checks PostgreSQL and reports ready while the framework's in-memory throttle store is active. Root `npm test` and `npm run typecheck` generate the Prisma client before running.
 
-The frontend includes session login, signup, and sign-out; wallet connection for injected EVM wallets and Phantom/Solflare-compatible Solana wallets; native balance reads and wallet-approved transfers; noncustodial Jupiter Solana and 0x EVM swap flows; skippable onboarding; and indicative EVM quotes compared across 0x, 1inch, and ParaSwap. The perpetual endpoint remains a simplified risk simulation that does not place, sign, or broadcast orders. Neither swap integrations nor risk estimates are trading recommendations. Perpetual order execution, exchange/clearinghouse selection, token-approval management and revocation screens, session listing/revocation, phishing/abuse controls, and vendor-backed KYC/AML/sanctions screening remain incomplete; this is not yet a production-ready enterprise trading platform. Both swap execution paths require provider credentials, applying database migrations, configured chain RPCs, a controlled rollout, and operational monitoring before production use.
+The frontend includes session login, signup, sign-out, and refresh-session listing/revocation; wallet connection for injected EVM wallets and Phantom/Solflare-compatible Solana wallets; native balance reads and wallet-approved transfers; noncustodial Jupiter Solana and 0x EVM swap flows; skippable onboarding; and indicative EVM quotes compared across 0x, 1inch, and ParaSwap. The perpetual endpoint remains a simplified risk simulation that does not place, sign, or broadcast orders. Neither swap integrations nor risk estimates are trading recommendations. Perpetual order execution, exchange/clearinghouse selection, multi-token portfolio balances, token-approval discovery and revocation, transfer simulation before wallet prompts, phishing/abuse controls, and vendor-backed KYC/AML/sanctions screening remain incomplete; this is not yet a production-ready enterprise trading platform. Both swap execution paths require provider credentials, applying database migrations, configured chain RPCs, a controlled rollout, and operational monitoring before production use.
 
 Wallets retain control of private keys. The application does not request or store seed phrases or private keys. Review every network, recipient, amount, and fee in the wallet before approving a transaction.
