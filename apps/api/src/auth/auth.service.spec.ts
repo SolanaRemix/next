@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { UserRole } from '@prisma/client';
+import { AccountStatus, UserRole } from '@prisma/client';
 import { AuthService } from './auth.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 
@@ -19,6 +19,7 @@ const user = {
   email: 'user@example.com',
   passwordHash: 'argon2id-hash',
   role: UserRole.Guest,
+  accountStatus: AccountStatus.Active,
   deletedAt: null,
 };
 
@@ -32,6 +33,7 @@ function createFixture() {
         id: user.id,
         email: user.email,
         role: UserRole.Guest,
+        accountStatus: AccountStatus.Active,
       }),
       findFirst: vi.fn(),
       count: vi.fn(),
@@ -104,6 +106,27 @@ describe('AuthService', () => {
     argonVerify.mockResolvedValue(false);
     await expect(service.login('user@example.com', 'incorrect-password'))
       .rejects.toThrow('Invalid email or password.');
+  });
+
+  it('rejects restricted accounts during login and token refresh', async () => {
+    const { service, prisma, transaction } = createFixture();
+    prisma.user.findFirst.mockResolvedValue({
+      ...user,
+      accountStatus: AccountStatus.Restricted,
+    });
+    await expect(service.login('user@example.com', 'a-secure-password'))
+      .rejects.toThrow('Invalid email or password.');
+    expect(argonVerify).not.toHaveBeenCalled();
+
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: 'refresh-id',
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { ...user, accountStatus: AccountStatus.Restricted },
+    });
+    await expect(service.refresh('A'.repeat(43)))
+      .rejects.toThrow(/invalid or expired/i);
+    expect(transaction.refreshToken.create).not.toHaveBeenCalled();
   });
 
   it('rotates a refresh token once and returns a fresh access token', async () => {
@@ -185,12 +208,90 @@ describe('AuthService', () => {
     expect(transaction.user.update).not.toHaveBeenCalled();
   });
 
+  it('restricts accounts, revokes refresh sessions, and audits the reason code', async () => {
+    const { service, transaction } = createFixture();
+    const target = {
+      id: user.id,
+      email: user.email,
+      role: UserRole.Guest,
+      accountStatus: AccountStatus.Active,
+      createdAt: new Date(),
+    };
+    transaction.user.findFirst
+      .mockResolvedValueOnce({ id: 'admin-id' })
+      .mockResolvedValueOnce(target);
+    transaction.user.update.mockResolvedValue({
+      ...target,
+      accountStatus: AccountStatus.Restricted,
+    });
+
+    const updated = await service.setAccountStatus(
+      'admin-id',
+      user.id,
+      AccountStatus.Restricted,
+      'policy_review',
+    );
+
+    expect(updated.accountStatus).toBe(AccountStatus.Restricted);
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorId: 'admin-id',
+        action: 'admin.user.account_status_changed',
+        metadata: expect.objectContaining({
+          targetId: user.id,
+          previousStatus: AccountStatus.Active,
+          newStatus: AccountStatus.Restricted,
+          reason: 'policy_review',
+        }),
+      }),
+    });
+  });
+
+  it('prevents restricting the final active SuperAdmin and self-restriction', async () => {
+    const { service, transaction } = createFixture();
+    const admin = {
+      id: 'admin-id',
+      email: 'admin@example.com',
+      role: UserRole.SuperAdmin,
+      accountStatus: AccountStatus.Active,
+      createdAt: new Date(),
+    };
+    transaction.user.findFirst
+      .mockResolvedValueOnce({ id: 'admin-id' })
+      .mockResolvedValueOnce(admin);
+    transaction.user.count.mockResolvedValue(1);
+
+    await expect(service.setAccountStatus(
+      'admin-id',
+      'admin-id',
+      AccountStatus.Restricted,
+      'legal_request',
+    )).rejects.toThrow(/cannot restrict their own account/i);
+    expect(transaction.user.update).not.toHaveBeenCalled();
+
+    transaction.user.findFirst
+      .mockResolvedValueOnce({ id: 'admin-id' })
+      .mockResolvedValueOnce({ ...admin, id: user.id, role: UserRole.SuperAdmin });
+    await expect(service.setAccountStatus(
+      'admin-id',
+      user.id,
+      AccountStatus.Restricted,
+      'legal_request',
+    )).rejects.toThrow(/last active SuperAdmin/i);
+    expect(transaction.user.update).not.toHaveBeenCalled();
+  });
+
   it('returns active user details without password hashes for the admin directory', async () => {
     const { service, prisma } = createFixture();
     const findMany = vi.fn().mockResolvedValue([{
       id: user.id,
       email: user.email,
       role: UserRole.Guest,
+      accountStatus: AccountStatus.Active,
       createdAt: new Date(),
     }]);
     const serviceWithList = new AuthService(

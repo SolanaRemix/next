@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { UserRole } from '@prisma/client';
+import { AccountStatus, UserRole } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { createHash, randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
@@ -24,6 +24,7 @@ export interface PublicUser {
 
 export interface AdminUser extends PublicUser {
   createdAt: Date;
+  accountStatus: AccountStatus;
 }
 
 export interface AuthSession {
@@ -83,7 +84,11 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({
       where: { email: email.trim().toLowerCase(), deletedAt: null },
     });
-    if (!user || !(await argon2.verify(user.passwordHash, password))) {
+    if (
+      !user ||
+      user.accountStatus !== AccountStatus.Active ||
+      !(await argon2.verify(user.passwordHash, password))
+    ) {
       await this.prisma.auditLog.create({
         data: { action: 'auth.login.failed', ...(user ? { actorId: user.id } : {}) },
       });
@@ -104,7 +109,13 @@ export class AuthService {
         include: { user: true },
       });
       const now = new Date();
-      if (!stored || stored.revokedAt || stored.expiresAt <= now || stored.user.deletedAt) {
+      if (
+        !stored ||
+        stored.revokedAt ||
+        stored.expiresAt <= now ||
+        stored.user.deletedAt ||
+        stored.user.accountStatus !== AccountStatus.Active
+      ) {
         throw new UnauthorizedException('Refresh session is invalid or expired.');
       }
       const revoked = await transaction.refreshToken.updateMany({
@@ -150,7 +161,7 @@ export class AuthService {
   async listUsers(limit: number, cursor?: string): Promise<AdminUser[]> {
     return this.prisma.user.findMany({
       where: { deletedAt: null },
-      select: { id: true, email: true, role: true, createdAt: true },
+      select: { id: true, email: true, role: true, accountStatus: true, createdAt: true },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -160,7 +171,12 @@ export class AuthService {
   async assignRole(actorId: string, targetId: string, role: UserRole): Promise<PublicUser> {
     return this.prisma.$transaction(async (transaction) => {
       const actor = await transaction.user.findFirst({
-        where: { id: actorId, role: UserRole.SuperAdmin, deletedAt: null },
+        where: {
+          id: actorId,
+          role: UserRole.SuperAdmin,
+          accountStatus: AccountStatus.Active,
+          deletedAt: null,
+        },
         select: { id: true },
       });
       if (!actor) throw new UnauthorizedException('SuperAdmin access is required.');
@@ -189,6 +205,81 @@ export class AuthService {
           metadata: { targetId, previousRole: target.role, newRole: role },
         },
       });
+      return updated;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  async setAccountStatus(
+    actorId: string,
+    targetId: string,
+    status: AccountStatus,
+    reason: 'account_compromise' | 'policy_review' | 'legal_request' | 'other',
+  ): Promise<AdminUser> {
+    return this.prisma.$transaction(async (transaction) => {
+      const actor = await transaction.user.findFirst({
+        where: {
+          id: actorId,
+          role: UserRole.SuperAdmin,
+          accountStatus: AccountStatus.Active,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!actor) throw new UnauthorizedException('Active SuperAdmin access is required.');
+      const target = await transaction.user.findFirst({
+        where: { id: targetId, deletedAt: null },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          accountStatus: true,
+          createdAt: true,
+        },
+      });
+      if (!target) throw new NotFoundException('User not found.');
+      if (actorId === targetId && status !== AccountStatus.Active) {
+        throw new ConflictException('Administrators cannot restrict their own account.');
+      }
+      if (
+        target.role === UserRole.SuperAdmin &&
+        target.accountStatus === AccountStatus.Active &&
+        status === AccountStatus.Restricted
+      ) {
+        const activeSuperAdmins = await transaction.user.count({
+          where: {
+            role: UserRole.SuperAdmin,
+            accountStatus: AccountStatus.Active,
+            deletedAt: null,
+          },
+        });
+        if (activeSuperAdmins <= 1) {
+          throw new ConflictException('The last active SuperAdmin cannot be restricted.');
+        }
+      }
+      if (target.accountStatus === status) return target;
+      const updated = await transaction.user.update({
+        where: { id: targetId },
+        data: { accountStatus: status },
+        select: { id: true, email: true, role: true, accountStatus: true, createdAt: true },
+      });
+      await transaction.auditLog.create({
+        data: {
+          actorId,
+          action: 'admin.user.account_status_changed',
+          metadata: {
+            targetId,
+            previousStatus: target.accountStatus,
+            newStatus: status,
+            reason,
+          },
+        },
+      });
+      if (status === AccountStatus.Restricted) {
+        await transaction.refreshToken.updateMany({
+          where: { userId: targetId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
       return updated;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }

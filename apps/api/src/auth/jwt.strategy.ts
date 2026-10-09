@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
+import { AccountStatus } from '@prisma/client';
 import type { UserRole } from '@next/types';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import {
@@ -36,9 +37,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     const user = await this.prisma.user.findFirst({
       where: { id: payload.sub, deletedAt: null },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true, role: true, accountStatus: true },
     });
-    if (!user) throw new UnauthorizedException();
+    if (!user || user.accountStatus !== AccountStatus.Active) throw new UnauthorizedException();
     return { ...user, role: user.role as UserRole };
   }
 }

@@ -20,7 +20,12 @@ import {
 } from './auth.constants.js';
 import { CurrentUser, Public, Roles } from './auth.decorators.js';
 import type { AuthUser } from './auth-user.js';
-import { AssignRoleDto, CredentialsDto, ListUsersQueryDto } from './auth.dto.js';
+import {
+  AssignRoleDto,
+  CredentialsDto,
+  ListUsersQueryDto,
+  UpdateAccountStatusDto,
+} from './auth.dto.js';
 import { AuthService, type AuthSession } from './auth.service.js';
 
 function setRefreshCookie(response: Response, token: string): void {
@@ -124,5 +129,20 @@ export class AuthController {
     @Body() request: AssignRoleDto,
   ) {
     return this.authService.assignRole(actor.id, targetId, request.role);
+  }
+
+  @Roles('SuperAdmin')
+  @Patch('users/:id/status')
+  updateAccountStatus(
+    @CurrentUser() actor: AuthUser,
+    @Param('id', new ParseUUIDPipe()) targetId: string,
+    @Body() request: UpdateAccountStatusDto,
+  ) {
+    return this.authService.setAccountStatus(
+      actor.id,
+      targetId,
+      request.status,
+      request.reason,
+    );
   }
 }
