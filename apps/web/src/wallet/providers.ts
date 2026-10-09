@@ -220,6 +220,137 @@ export async function fetchPortfolioBalances(
   return [nativeBalance, ...await solana.fetchSolanaTokenBalances(account)];
 }
 
+function assertEvmAddress(value: string, label: string): void {
+  if (!evmAddressPattern.test(value)) throw new Error(`Enter a valid ${label} address.`);
+}
+
+async function assertCurrentEvmWallet(
+  provider: Eip1193Provider,
+  account: WalletAccount,
+): Promise<void> {
+  const [chainId, accounts] = await Promise.all([
+    provider.request({ method: "eth_chainId" }),
+    provider.request({ method: "eth_accounts" }),
+  ]);
+  if (chainId !== account.chainId || !Array.isArray(accounts) || !accounts.some(
+    (address) => typeof address === "string" && address.toLowerCase() === account.address.toLowerCase(),
+  )) {
+    throw new Error("The connected EVM account or network changed. Reconnect before managing token allowances.");
+  }
+}
+
+function allowanceCallData(owner: string, spender: string): string {
+  return "0xdd62ed3e" +
+    owner.slice(2).toLowerCase().padStart(64, "0") +
+    spender.slice(2).toLowerCase().padStart(64, "0");
+}
+
+export async function readEvmTokenAllowance(
+  account: WalletAccount,
+  tokenAddress: string,
+  spender: string,
+): Promise<bigint> {
+  const [allowance] = await readEvmTokenAllowances(account, [{ tokenAddress, spender }]);
+  if (allowance === undefined) throw new Error("Wallet returned an invalid token allowance.");
+  return allowance;
+}
+
+export async function readEvmTokenAllowances(
+  account: WalletAccount,
+  entries: readonly { tokenAddress: string; spender: string }[],
+): Promise<bigint[]> {
+  if (account.chain !== "evm") throw new Error("Connect an EVM wallet to read token allowances.");
+  assertEvmAddress(account.address, "connected wallet");
+  if (entries.length > 50) throw new Error("Read at most 50 token allowances at a time.");
+  for (const entry of entries) {
+    assertEvmAddress(entry.tokenAddress, "ERC-20 token contract");
+    assertEvmAddress(entry.spender, "spender");
+  }
+  const provider = getEvmProvider();
+  await assertCurrentEvmWallet(provider, account);
+  const allowances = await Promise.all(entries.map(async ({ tokenAddress, spender }) => {
+    const result = await provider.request({
+      method: "eth_call",
+      params: [{ to: tokenAddress, data: allowanceCallData(account.address, spender) }, "latest"],
+    });
+    return parseHexQuantity(result);
+  }));
+  await assertCurrentEvmWallet(provider, account);
+  return allowances;
+}
+
+export async function revokeEvmTokenAllowance(
+  account: WalletAccount,
+  tokenAddress: string,
+  spender: string,
+): Promise<string> {
+  if (account.chain !== "evm") throw new Error("Connect an EVM wallet to revoke token allowances.");
+  assertEvmAddress(account.address, "connected wallet");
+  assertEvmAddress(tokenAddress, "ERC-20 token contract");
+  assertEvmAddress(spender, "spender");
+  const provider = getEvmProvider();
+  await assertCurrentEvmWallet(provider, account);
+  const currentAllowance = await readEvmTokenAllowance(account, tokenAddress, spender);
+  if (currentAllowance === 0n) throw new Error("This spender already has zero allowance.");
+
+  const transaction = {
+    from: account.address,
+    to: tokenAddress,
+    value: "0x0",
+    data: `0x095ea7b3${spender.slice(2).toLowerCase().padStart(64, "0")}${"0".repeat(64)}`,
+  };
+  const simulation = await provider.request({
+    method: "eth_call",
+    params: [transaction, "latest"],
+  });
+  if (
+    typeof simulation === "string" &&
+    /^0x[0-9a-f]{64}$/i.test(simulation) &&
+    BigInt(simulation) !== 1n
+  ) {
+    throw new Error("Token simulation did not confirm approval revocation.");
+  }
+  if (typeof simulation !== "string" || (simulation !== "0x" && !/^0x[0-9a-f]{64}$/i.test(simulation))) {
+    throw new Error("Token returned an invalid approval simulation result.");
+  }
+  await assertCurrentEvmWallet(provider, account);
+  const gasLimit = parseHexQuantity(await provider.request({
+    method: "eth_estimateGas",
+    params: [transaction],
+  }));
+  await assertCurrentEvmWallet(provider, account);
+  if (await readEvmTokenAllowance(account, tokenAddress, spender) !== currentAllowance) {
+    throw new Error("Token allowance changed during review. Refresh it before revoking.");
+  }
+  const transactionId = await provider.request({
+    method: "eth_sendTransaction",
+    params: [{ ...transaction, gas: `0x${gasLimit.toString(16)}` }],
+  });
+  if (typeof transactionId !== "string" || !/^0x[a-fA-F0-9]{64}$/.test(transactionId)) {
+    throw new Error("Wallet returned an invalid transaction identifier.");
+  }
+
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const receipt = await provider.request({
+      method: "eth_getTransactionReceipt",
+      params: [transactionId],
+    });
+    if (receipt && typeof receipt === "object" && "status" in receipt) {
+      const status = (receipt as { status?: unknown }).status;
+      if (status === "0x0") throw new Error(`Allowance revocation transaction ${transactionId} reverted.`);
+      if (status !== "0x1") throw new Error("Wallet returned an invalid allowance transaction receipt.");
+      await assertCurrentEvmWallet(provider, account);
+      if (await readEvmTokenAllowance(account, tokenAddress, spender) !== 0n) {
+        throw new Error("Transaction confirmed, but the spender allowance is still non-zero.");
+      }
+      return transactionId;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`Timed out waiting for allowance revocation transaction ${transactionId}.`);
+}
+
 export async function sendNativeTransfer(
   account: WalletAccount,
   request: NativeTransferRequest,

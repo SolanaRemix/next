@@ -2,6 +2,17 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useWallet } from "./WalletContext";
 import { addEvmTokenToWatchlist, loadEvmTokenWatchlist, removeEvmTokenFromWatchlist } from "./tokenWatchlist";
+import {
+  readEvmTokenAllowances,
+  readEvmTokenAllowance,
+  revokeEvmTokenAllowance,
+} from "./providers";
+import {
+  addTrackedAllowance,
+  loadTrackedAllowances,
+  removeTrackedAllowance,
+} from "./allowanceWatchlist";
+import type { TrackedAllowance } from "./allowanceWatchlist";
 
 export function WalletPanel() {
   const {
@@ -20,16 +31,46 @@ export function WalletPanel() {
   const [amount, setAmount] = useState("");
   const [tokenAddress, setTokenAddress] = useState("");
   const [trackedTokens, setTrackedTokens] = useState<string[]>([]);
+  const [trackedAllowances, setTrackedAllowances] = useState<TrackedAllowance[]>([]);
+  const [allowanceValues, setAllowanceValues] = useState<Record<string, string>>({});
+  const [allowanceTokenAddress, setAllowanceTokenAddress] = useState("");
+  const [allowanceSpender, setAllowanceSpender] = useState("");
+  const [busyAllowance, setBusyAllowance] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!account) {
       setTrackedTokens([]);
+      setTrackedAllowances([]);
+      setAllowanceValues({});
       return;
     }
     const tokens = loadEvmTokenWatchlist(account);
     setTrackedTokens(tokens);
     void refreshPortfolio(tokens).catch(() => undefined);
+    const allowances = loadTrackedAllowances(account);
+    setTrackedAllowances(allowances);
+    setAllowanceValues({});
+    if (account.chain === "evm") {
+      let active = true;
+      void readEvmTokenAllowances(account, allowances)
+        .then((values) => {
+          if (active) {
+            setAllowanceValues(Object.fromEntries(
+              allowances.map((entry, index) => [allowanceKey(entry), values[index]?.toString() ?? "Error: Invalid allowance response."]),
+            ));
+          }
+        })
+        .catch((cause: unknown) => {
+          if (active) {
+            const message = cause instanceof Error ? cause.message : "Unable to read allowances.";
+            setAllowanceValues(Object.fromEntries(
+              allowances.map((entry) => [allowanceKey(entry), `Error: ${message}`]),
+            ));
+          }
+        });
+      return () => { active = false; };
+    }
   }, [account, refreshPortfolio]);
 
   async function submitTransfer(event: FormEvent<HTMLFormElement>) {
@@ -74,6 +115,71 @@ export function WalletPanel() {
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : "Unable to remove the token.");
     }
+  }
+
+  async function refreshAllowances(entries: readonly TrackedAllowance[] = trackedAllowances) {
+    if (!account || account.chain !== "evm") return;
+    setBusyAllowance("refresh");
+    try {
+      const values = await readEvmTokenAllowances(account, entries);
+      setAllowanceValues(Object.fromEntries(
+        entries.map((entry, index) => [allowanceKey(entry), values[index]?.toString() ?? "Error: Invalid allowance response."]),
+      ));
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Unable to read allowances.";
+      setAllowanceValues(Object.fromEntries(entries.map((entry) => [allowanceKey(entry), `Error: ${message}`])));
+    } finally {
+      setBusyAllowance(null);
+    }
+  }
+
+  async function addAllowance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!account || account.chain !== "evm") return;
+    setNotice(null);
+    setBusyAllowance("add");
+    try {
+      const next = addTrackedAllowance(account, allowanceTokenAddress, allowanceSpender);
+      const tokenAddress = allowanceTokenAddress.trim().toLowerCase();
+      const spender = allowanceSpender.trim().toLowerCase();
+      const allowance = await readEvmTokenAllowance(account, tokenAddress, spender);
+      setTrackedAllowances(next);
+      setAllowanceValues((current) => ({ ...current, [allowanceKey({ tokenAddress, spender })]: allowance.toString() }));
+      setAllowanceTokenAddress("");
+      setAllowanceSpender("");
+      setNotice("Allowance pair added. Review spender permissions carefully before revoking.");
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "Unable to read this token allowance.");
+    } finally {
+      setBusyAllowance(null);
+    }
+  }
+
+  async function revokeAllowance(entry: TrackedAllowance) {
+    if (!account || account.chain !== "evm") return;
+    const key = allowanceKey(entry);
+    setBusyAllowance(key);
+    setNotice(null);
+    try {
+      const transactionId = await revokeEvmTokenAllowance(account, entry.tokenAddress, entry.spender);
+      setAllowanceValues((current) => ({ ...current, [key]: "0" }));
+      setNotice(`Allowance revoked and verified: ${transactionId}`);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "Unable to revoke token allowance.");
+    } finally {
+      setBusyAllowance(null);
+    }
+  }
+
+  function forgetAllowance(entry: TrackedAllowance) {
+    if (!account || account.chain !== "evm") return;
+    const next = removeTrackedAllowance(account, entry);
+    setTrackedAllowances(next);
+    setAllowanceValues((current) => {
+      const updated = { ...current };
+      delete updated[allowanceKey(entry)];
+      return updated;
+    });
   }
 
   return (
@@ -171,6 +277,89 @@ export function WalletPanel() {
               </form>
             )}
           </section>
+          {account.chain === "evm" && (
+            <section className="allowance-manager" aria-label="ERC-20 token allowances">
+              <div className="section-heading">
+                <div><p className="eyebrow">APPROVAL SECURITY</p><h3>ERC-20 allowances</h3></div>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => void refreshAllowances()}
+                  disabled={busyAllowance !== null}
+                >
+                  Refresh
+                </button>
+              </div>
+              <p className="muted">Track a token and spender pair to read its allowance on this network. This is not automatic discovery; untracked approvals are not shown.</p>
+              {trackedAllowances.length === 0
+                ? <p className="muted">No token and spender pairs are tracked.</p>
+                : <div className="portfolio-list">
+                  {trackedAllowances.map((entry) => {
+                    const key = allowanceKey(entry);
+                    const value = allowanceValues[key];
+                    const trackedToken = tokenBalances.find((token) => token.tokenAddress === entry.tokenAddress);
+                    const amount = value && !value.startsWith("Error:")
+                      ? `${trackedToken
+                        ? `${formatAllowance(value, trackedToken.decimals)} ${trackedToken.asset}`
+                        : `${value} raw units`}`
+                      : value ?? "Loading allowance…";
+                    return (
+                      <div className="portfolio-token allowance-row" key={key}>
+                        <div>
+                          <strong>{amount}</strong>
+                          <span className="muted">Token: {entry.tokenAddress}</span>
+                          <span className="muted">Spender: {entry.spender}</span>
+                        </div>
+                        {value && !value.startsWith("Error:") && BigInt(value) > 0n && (
+                          <FlashButton
+                            type="button"
+                            variant="danger"
+                            disabled={busyAllowance !== null}
+                            onClick={() => void revokeAllowance(entry)}
+                          >
+                            {busyAllowance === key ? "Waiting for wallet…" : "Revoke"}
+                          </FlashButton>
+                        )}
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={busyAllowance !== null}
+                          onClick={() => forgetAllowance(entry)}
+                        >
+                          Forget
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>}
+              <form className="token-watchlist-form" onSubmit={(event) => void addAllowance(event)}>
+                <label>ERC-20 token contract
+                  <input
+                    required
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={42}
+                    value={allowanceTokenAddress}
+                    onChange={(event) => setAllowanceTokenAddress(event.target.value)}
+                    placeholder="0x…"
+                  />
+                </label>
+                <label>Approved spender
+                  <input
+                    required
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={42}
+                    value={allowanceSpender}
+                    onChange={(event) => setAllowanceSpender(event.target.value)}
+                    placeholder="0x…"
+                  />
+                </label>
+                <FlashButton type="submit" disabled={busyAllowance !== null}>Check allowance</FlashButton>
+              </form>
+              <p className="muted">Revocation is simulated, gas-estimated, and submitted only after approval in your wallet. Use “Forget” only to remove a pair from this browser; it does not revoke on-chain permission.</p>
+            </section>
+          )}
           <form className="transfer-form" onSubmit={(event) => void submitTransfer(event)}>
             <h3>Send native asset</h3>
             <label>Recipient address<input required autoComplete="off" value={recipient} onChange={(event) => setRecipient(event.target.value)} /></label>
@@ -184,4 +373,16 @@ export function WalletPanel() {
       <p className="wallet-disclaimer">Transactions are sent to your wallet for approval. Verify chain, address, and amount before confirming.</p>
     </GlassCard>
   );
+}
+
+function allowanceKey(entry: TrackedAllowance): string {
+  return `${entry.tokenAddress.toLowerCase()}:${entry.spender.toLowerCase()}`;
+}
+
+function formatAllowance(value: string, decimals: number): string {
+  const amount = BigInt(value);
+  const scale = 10n ** BigInt(decimals);
+  const whole = amount / scale;
+  const fraction = (amount % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
 }

@@ -5,6 +5,8 @@ import {
   fetchEvmTokenBalances,
   fetchNativeBalance,
   parseTokenAmount,
+  readEvmTokenAllowance,
+  revokeEvmTokenAllowance,
 } from "./providers";
 import type { EvmSwapOrderResponse, WalletAccount } from "@next/types";
 
@@ -188,6 +190,7 @@ describe("fetchEvmTokenBalances", () => {
       }
       throw new Error(`Unexpected wallet method: ${method}`);
     });
+
     window.ethereum = { request };
 
     await expect(fetchEvmTokenBalances(account, [tokenAddress])).resolves.toEqual([{

@@ -65,6 +65,12 @@ button { color: inherit; }
 .token-watchlist-form input { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); min-height: 44px; padding: 0 12px; }
 .token-watchlist-form input:focus { border-color: var(--brand-orange); outline: 2px solid rgba(255, 87, 34, 0.25); }
 .token-watchlist-form .muted { font-size: 0.78rem; margin: 0; }
+.allowance-manager { border-top: 1px solid rgba(255, 255, 255, 0.08); display: grid; gap: 12px; margin: 20px 0; padding-top: 18px; }
+.allowance-manager h3 { font-size: 1rem; margin: 0; }
+.allowance-manager > .muted { font-size: 0.78rem; margin: 0; }
+.allowance-row { align-items: start; }
+.allowance-row > div:first-child { overflow-wrap: anywhere; }
+.allowance-row .muted { font-size: 0.72rem; }
 .transfer-form { display: grid; gap: 13px; }
 .transfer-form h3 { font-size: 1rem; margin: 0; }
 .transfer-form label, .invite-input { color: var(--text-muted); display: grid; font-size: 0.86rem; gap: 7px; }
