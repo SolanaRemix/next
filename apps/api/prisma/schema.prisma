@@ -32,6 +32,7 @@ model User {
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
   solanaSwapOrders SolanaSwapOrder[]
+  financialControlChanges FinancialOperationsControl[]
 
   @@index([role])
   @@index([accountStatus])
@@ -98,6 +99,7 @@ model FinancialOperationsControl {
   enabled   Boolean  @default(false)
   updatedBy String?  @map("updated_by") @db.Uuid
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updater   User?    @relation(fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("financial_operations_controls")
 }

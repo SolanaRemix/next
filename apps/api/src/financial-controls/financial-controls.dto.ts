@@ -1,4 +1,4 @@
-import { IsBoolean, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateExecutionControlDto {
   @IsBoolean()
@@ -7,5 +7,6 @@ export class UpdateExecutionControlDto {
   @IsString()
   @MinLength(3)
   @MaxLength(500)
+  @Matches(/\S/)
   reason!: string;
 }

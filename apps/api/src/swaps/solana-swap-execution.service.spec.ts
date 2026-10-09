@@ -88,16 +88,6 @@ describe('SolanaSwapExecutionService', () => {
       prioritizationFeeLamports: 12000,
       minimumOutputAmount: '2475000',
     });
-
-    it('blocks order creation while the global execution control is disabled', async () => {
-      controls.assertExecutionEnabled.mockRejectedValueOnce(new Error('disabled'));
-      const fetch = vi.fn();
-      vi.stubGlobal('fetch', fetch);
-
-      await expect(service.order('user-1', request)).rejects.toThrow('disabled');
-      expect(fetch).not.toHaveBeenCalled();
-      expect(prisma.solanaSwapOrder.findUnique).not.toHaveBeenCalled();
-    });
     expect(result.executionId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(prisma.solanaSwapOrder.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -107,6 +97,16 @@ describe('SolanaSwapExecutionService', () => {
         taker,
       }),
     }));
+  });
+
+  it('blocks order creation while the global execution control is disabled', async () => {
+    controls.assertExecutionEnabled.mockRejectedValueOnce(new Error('disabled'));
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(service.order('user-1', request)).rejects.toThrow('disabled');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(prisma.solanaSwapOrder.findUnique).not.toHaveBeenCalled();
   });
 
   it('replays an existing unexpired idempotent order without contacting Jupiter', async () => {
@@ -195,6 +195,31 @@ describe('SolanaSwapExecutionService', () => {
           .digest('hex'),
       }),
     }));
+  });
+
+  it('blocks signed transaction submission when the global control is disabled', async () => {
+    prisma.solanaSwapOrder.findFirst.mockResolvedValue({
+      id: executionId,
+      requestId,
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 30_000),
+      executionStatus: 'ORDERED',
+      executionKey: null,
+      executionResult: null,
+      updatedAt: new Date(),
+    });
+    controls.assertExecutionEnabled.mockRejectedValueOnce(new Error('disabled'));
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(service.execute('user-1', {
+      executionId,
+      requestId,
+      signedTransaction: encodedTransaction,
+      idempotencyKey,
+    })).rejects.toThrow('disabled');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
   });
 
   it('reconciles interrupted execution from the Solana RPC signature status', async () => {
