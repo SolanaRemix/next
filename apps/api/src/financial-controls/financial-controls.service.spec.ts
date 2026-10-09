@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ServiceUnavailableException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { FinancialControlsService } from './financial-controls.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 
@@ -71,6 +72,9 @@ describe('FinancialControlsService', () => {
           reason: 'release approved',
         },
       },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
   });
 });

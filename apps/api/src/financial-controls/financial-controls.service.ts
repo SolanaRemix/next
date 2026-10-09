@@ -76,6 +76,6 @@ export class FinancialControlsService {
         updatedAt: control.updatedAt.toISOString(),
         updatedBy: control.updatedBy,
       };
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 }

@@ -7,6 +7,17 @@ const validConfig = {
   WEB_ORIGIN: 'https://example.com',
 };
 
+const productionRpcConfig = {
+  NODE_ENV: 'production',
+  REDIS_URL: 'rediss://redis.example.com:6380',
+  RPC_PRIVATE_HOSTS: 'solana.private.example,evm.private.example',
+  SOLANA_RPC_URL: 'https://solana.private.example/rpc',
+  ...Object.fromEntries(
+    ['1', '10', '56', '137', '8453', '42161', '43114']
+      .map((chainId) => [`EVM_RPC_URL_${chainId}`, 'https://evm.private.example/rpc']),
+  ),
+};
+
 describe('validateEnvironment', () => {
   it('accepts PostgreSQL configuration and a sufficiently strong JWT secret', () => {
     expect(validateEnvironment(validConfig)).toEqual(validConfig);
@@ -121,5 +132,30 @@ describe('validateEnvironment', () => {
     ...validConfig,
     EVM_CONFIRMATIONS_1: '1e2',
     })).toThrow(/between 2 and 1000/);
+  });
+
+  it('requires approved private RPCs for every production chain', () => {
+    expect(validateEnvironment({ ...validConfig, ...productionRpcConfig }))
+      .toMatchObject(productionRpcConfig);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      EVM_RPC_URL_56: undefined,
+    })).toThrow(/EVM_RPC_URL_56 is required/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com',
+    })).toThrow(/SOLANA_RPC_URL must use an approved private RPC hostname/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      RPC_PRIVATE_HOSTS: 'evm.private.example',
+    })).toThrow(/SOLANA_RPC_URL must use an approved private RPC hostname/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      RPC_PRIVATE_HOSTS: 'https://evm.private.example/rpc',
+    })).toThrow(/RPC_PRIVATE_HOSTS must contain hostnames only/);
   });
 });

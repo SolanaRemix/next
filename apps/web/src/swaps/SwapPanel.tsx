@@ -248,7 +248,9 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
           <p className="eyebrow">EVM · MULTI-AGGREGATOR</p>
           <h2>Swap quote</h2>
         </div>
-        {bestRoute && <GlowBadge tone="green">BEST: {bestRoute.provider}</GlowBadge>}
+        {evmOrder
+          ? <GlowBadge tone="neutral">REVIEW BEFORE SIGNING</GlowBadge>
+          : bestRoute && <GlowBadge tone="green">BEST: {bestRoute.provider}</GlowBadge>}
       </div>
       <form className="swap-form" onSubmit={(event) => void getQuote(event)}>
         <label>Network
