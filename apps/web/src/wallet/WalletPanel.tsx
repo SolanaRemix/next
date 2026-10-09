@@ -6,6 +6,8 @@ import { fetchEvmPortfolioPrices, fetchSolanaPortfolioPrices } from "./portfolio
 import type { PortfolioPricesResponse } from "@next/types";
 import { amountInUsd, calculatePortfolioUsdValue, formatUsd } from "./portfolioValuation";
 import { addEvmTokenToWatchlist, loadEvmTokenWatchlist, removeEvmTokenFromWatchlist } from "./tokenWatchlist";
+import { loadLatestOfflinePortfolio, saveOfflinePortfolio } from "./offlinePortfolio";
+import type { OfflinePortfolioSnapshot } from "./offlinePortfolio";
 import {
   readEvmTokenAllowances,
   readEvmTokenAllowance,
@@ -51,6 +53,9 @@ export function WalletPanel() {
   const [busyPrices, setBusyPrices] = useState(false);
   const [priceRefreshVersion, setPriceRefreshVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [offlineSnapshot, setOfflineSnapshot] = useState<OfflinePortfolioSnapshot | null>(
+    () => loadLatestOfflinePortfolio(),
+  );
   const priceChainMatches = account !== null && portfolioPrices?.chainId ===
     (account.chain === "evm" ? account.chainId.toLowerCase() : account.chainId);
   const normalizePriceAddress = (address: string): string =>
@@ -154,6 +159,19 @@ export function WalletPanel() {
       controller.abort();
     };
   }, [account, accessToken, user, trackedTokens, tokenBalances, priceRefreshVersion]);
+
+  useEffect(() => {
+    if (!account || !balance || balance.address.toLowerCase() !== account.address.toLowerCase()
+      || balance.chain !== account.chain) return;
+    const prices = priceChainMatches ? portfolioPrices : null;
+    const snapshot = saveOfflinePortfolio(
+      account,
+      [balance, ...tokenBalances],
+      account.chain === "evm" ? trackedTokens.length : tokenBalances.length,
+      prices,
+    );
+    if (snapshot) setOfflineSnapshot(snapshot);
+  }, [account, balance, tokenBalances, trackedTokens, portfolioPrices, priceChainMatches]);
 
   async function reviewTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -294,13 +312,18 @@ export function WalletPanel() {
         {account && <GlowBadge tone="green">{account.chain === "evm" ? "EVM" : "SOLANA"}</GlowBadge>}
       </div>
       {!account ? (
-        <div className="wallet-connect-actions">
-          <p className="muted">Connect a wallet to view balances and send assets. Your keys remain in your wallet.</p>
-          <div className="button-row">
-            <FlashButton onClick={() => void connect("evm").catch(() => undefined)} disabled={busy}>Connect EVM</FlashButton>
-            <FlashButton variant="success" onClick={() => void connect("solana").catch(() => undefined)} disabled={busy}>Connect Solana</FlashButton>
+        <>
+          <div className="wallet-connect-actions">
+            <p className="muted">Connect a wallet to view balances and send assets. Your keys remain in your wallet.</p>
+            <div className="button-row">
+              <FlashButton onClick={() => void connect("evm").catch(() => undefined)} disabled={busy}>Connect EVM</FlashButton>
+              <FlashButton variant="success" onClick={() => void connect("solana").catch(() => undefined)} disabled={busy}>Connect Solana</FlashButton>
+            </div>
           </div>
-        </div>
+          {offlineSnapshot && (
+            <OfflinePortfolioCard snapshot={offlineSnapshot} />
+          )}
+        </>
       ) : (
         <>
           <div className="wallet-account">
@@ -536,6 +559,62 @@ export function WalletPanel() {
       {notice && <p className="message" role="status">{notice}</p>}
       <p className="wallet-disclaimer">Transactions are sent to your wallet for approval. Verify chain, address, and amount before confirming.</p>
     </GlassCard>
+  );
+}
+
+function OfflinePortfolioCard({ snapshot }: { snapshot: OfflinePortfolioSnapshot }) {
+  const balance = snapshot.balances[0];
+  if (!balance) return null;
+  const prices = snapshot.prices?.chainId.toLowerCase() === snapshot.account.chainId.toLowerCase()
+    ? snapshot.prices
+    : null;
+  const priceFor = (address: string | undefined, native = false): number | null | undefined => {
+    if (!prices) return undefined;
+    if (native) return prices.nativePriceUsd;
+    return address
+      ? prices.tokenPrices.find((entry) => snapshot.account.chain === "evm"
+        ? entry.address.toLowerCase() === address.toLowerCase()
+        : entry.address === address)?.priceUsd
+      : undefined;
+  };
+  const total = calculatePortfolioUsdValue(
+    balance.amount,
+    priceFor(undefined, true),
+    snapshot.balances.slice(1).map((asset) => ({
+      amount: asset.amount,
+      priceUsd: priceFor(asset.tokenAddress),
+    })),
+    snapshot.expectedTokenCount,
+  );
+
+  return (
+    <section className="portfolio-assets" aria-label="Saved offline portfolio snapshot">
+      <div className="section-heading">
+        <div><p className="eyebrow">LOCAL SNAPSHOT</p><h3>Saved portfolio</h3></div>
+        <GlowBadge tone="neutral">{snapshot.account.chain === "evm" ? "EVM" : "SOLANA"}</GlowBadge>
+      </div>
+      <p className="muted">{snapshot.account.address} · {snapshot.account.chainId}</p>
+      <div className="balance-tile">
+        <span className="muted">Native balance · {balance.asset}</span>
+        <strong>{balance.amount}</strong>
+        <span className="muted">{total === null ? "Complete USD value unavailable" : `≈ ${formatUsd(total)}`}</span>
+      </div>
+      <div className="portfolio-list">
+        {snapshot.balances.slice(1).map((asset, index) => {
+          const value = amountInUsd(asset.amount, priceFor(asset.tokenAddress));
+          return (
+            <div className="portfolio-token" key={`${asset.tokenAddress ?? asset.asset}-${index}`}>
+              <div>
+                <strong>{asset.amount} {asset.asset}</strong>
+                <span className="muted">{asset.tokenAddress ?? "Native asset"}</span>
+                <span className="muted">{value === null ? "USD value unavailable" : `≈ ${formatUsd(value)}`}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="muted">Saved {new Date(snapshot.capturedAt).toLocaleString()}. This device-only snapshot may be stale and is not a live balance.</p>
+    </section>
   );
 }
 

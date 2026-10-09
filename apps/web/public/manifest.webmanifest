@@ -1,0 +1,18 @@
+{
+  "name": "Mega Gods Prompt NEXT",
+  "short_name": "Mega Gods",
+  "description": "Self-custody multi-chain portfolio access.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090b0d",
+  "theme_color": "#090b0d",
+  "icons": [
+    {
+      "src": "/icons/app.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
