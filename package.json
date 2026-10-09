@@ -1,0 +1,38 @@
+{
+  "name": "mega-gods-prompt-next",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @next/web",
+    "dev:api": "npm run start:dev --workspace @next/api",
+    "build": "npm run typecheck && npm run build --workspace @next/web && npm run build --workspace @next/api",
+    "test": "npm run db:generate --workspace @next/api && npm run test --workspace @next/web && npm run test --workspace @next/api",
+    "typecheck": "npm run db:generate --workspace @next/api && tsc --build"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vitejs/plugin-react": "4.3.4",
+    "jsdom": "25.0.1",
+    "@tailwindcss/vite": "4.3.3",
+    "postcss": "8.5.29",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.7.3",
+    "vite": "6.4.3",
+    "vitest": "5.0.3"
+  },
+  "overrides": {
+    "jayson": {
+      "stream-json": "3.7.0",
+      "uuid": "11.1.1"
+    },
+    "tsx": {
+      "esbuild": "0.28.2"
+    }
+  }
+}

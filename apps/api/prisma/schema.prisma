@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SuperAdmin
+  EnterpriseAdmin
+  Trader
+  Viewer
+  Guest
+}
+
+enum AccountStatus {
+  Active
+  Restricted
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  email         String         @unique @db.VarChar(254)
+  passwordHash  String         @map("password_hash") @db.VarChar(255)
+  role          UserRole       @default(Guest)
+  accountStatus AccountStatus  @default(Active) @map("account_status")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt     DateTime?      @map("deleted_at") @db.Timestamptz(6)
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+  solanaSwapOrders SolanaSwapOrder[]
+  evmSwapOrders EvmSwapOrder[]
+  financialControlChanges FinancialOperationsControl[]
+
+  @@index([role])
+  @@index([accountStatus])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  action    String   @db.VarChar(120)
+  metadata  Json     @default("{}") @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+model SolanaSwapOrder {
+  id                     String   @id @default(uuid()) @db.Uuid
+  userId                 String   @map("user_id") @db.Uuid
+  idempotencyKey         String   @map("idempotency_key") @db.VarChar(36)
+  requestId              String   @unique @map("request_id") @db.VarChar(128)
+  taker                  String   @db.VarChar(44)
+  inputMint              String   @map("input_mint") @db.VarChar(44)
+  outputMint             String   @map("output_mint") @db.VarChar(44)
+  inputAmount            String   @map("input_amount") @db.VarChar(20)
+  orderPayload           Json     @map("order_payload") @db.JsonB
+  expiresAt              DateTime @map("expires_at") @db.Timestamptz(6)
+  executionKey           String?  @map("execution_key") @db.VarChar(36)
+  executionAttemptId     String?  @map("execution_attempt_id") @db.Uuid
+  executionStatus        String   @default("ORDERED") @map("execution_status") @db.VarChar(12)
+  transactionSignature   String?  @map("transaction_signature") @db.VarChar(88)
+  signedTransactionHash  String?  @map("signed_transaction_hash") @db.Char(64)
+  executionResult        Json?    @map("execution_result") @db.JsonB
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey])
+  @@unique([userId, executionKey])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("solana_swap_orders")
+}
+
+model EvmSwapOrder {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  idempotencyKey   String   @map("idempotency_key") @db.VarChar(36)
+  chainId          Int      @map("chain_id")
+  taker            String   @db.VarChar(42)
+  sellToken        String   @map("sell_token") @db.VarChar(42)
+  buyToken         String   @map("buy_token") @db.VarChar(42)
+  sellAmount       String   @map("sell_amount") @db.VarChar(78)
+  sellDecimals     Int      @map("sell_decimals")
+  buyDecimals      Int      @map("buy_decimals")
+  maxSlippageBps   Int      @map("max_slippage_bps")
+  buyAmount        String   @map("buy_amount") @db.VarChar(78)
+  minimumBuyAmount String   @map("minimum_buy_amount") @db.VarChar(78)
+  allowanceSpender String   @map("allowance_spender") @db.VarChar(42)
+  transactionTo   String   @map("transaction_to") @db.VarChar(42)
+  transactionData String   @map("transaction_data") @db.Text
+  transactionValue String  @map("transaction_value") @db.VarChar(78)
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz(6)
+  executionStatus  String   @default("ORDERED") @map("execution_status") @db.VarChar(12)
+  transactionHash  String?  @map("transaction_hash") @db.Char(66)
+  executionResult  Json?    @map("execution_result") @db.JsonB
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([executionStatus, expiresAt])
+  @@map("evm_swap_orders")
+}
+
+model FinancialOperationsControl {
+  id        String   @id @db.VarChar(32)
+  enabled   Boolean  @default(false)
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updater   User?    @relation(fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("financial_operations_controls")
+}
