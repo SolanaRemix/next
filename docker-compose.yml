@@ -1,0 +1,104 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      WEB_ORIGIN: ${WEB_ORIGIN:?Set WEB_ORIGIN to the browser origin}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set a random JWT_ACCESS_SECRET of at least 32 bytes}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD to a URL-safe random value}@redis:6379/0
+      RPC_PRIVATE_HOSTS: ${RPC_PRIVATE_HOSTS:?Set exact hostnames for all private RPC endpoints}
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:?Set a private Solana RPC endpoint}
+      EVM_RPC_URL_1: ${EVM_RPC_URL_1:?Set a private Ethereum RPC endpoint}
+      EVM_RPC_URL_10: ${EVM_RPC_URL_10:?Set a private Optimism RPC endpoint}
+      EVM_RPC_URL_56: ${EVM_RPC_URL_56:?Set a private BNB Chain RPC endpoint}
+      EVM_RPC_URL_137: ${EVM_RPC_URL_137:?Set a private Polygon RPC endpoint}
+      EVM_RPC_URL_8453: ${EVM_RPC_URL_8453:?Set a private Base RPC endpoint}
+      EVM_RPC_URL_42161: ${EVM_RPC_URL_42161:?Set a private Arbitrum RPC endpoint}
+      EVM_RPC_URL_43114: ${EVM_RPC_URL_43114:?Set a private Avalanche RPC endpoint}
+      JUPITER_API_KEY: ${JUPITER_API_KEY:-}
+      ZEROX_API_KEY: ${ZEROX_API_KEY:-}
+      ONEINCH_API_KEY: ${ONEINCH_API_KEY:-}
+      EVM_CONFIRMATIONS_1: ${EVM_CONFIRMATIONS_1:-12}
+      EVM_CONFIRMATIONS_10: ${EVM_CONFIRMATIONS_10:-20}
+      EVM_CONFIRMATIONS_56: ${EVM_CONFIRMATIONS_56:-15}
+      EVM_CONFIRMATIONS_137: ${EVM_CONFIRMATIONS_137:-128}
+      EVM_CONFIRMATIONS_8453: ${EVM_CONFIRMATIONS_8453:-20}
+      EVM_CONFIRMATIONS_42161: ${EVM_CONFIRMATIONS_42161:-20}
+      EVM_CONFIRMATIONS_43114: ${EVM_CONFIRMATIONS_43114:-12}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD to a URL-safe random value}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  redis-data:
