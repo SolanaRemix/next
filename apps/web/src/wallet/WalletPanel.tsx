@@ -3,7 +3,6 @@ import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useWallet } from "./WalletContext";
 import { addEvmTokenToWatchlist, loadEvmTokenWatchlist, removeEvmTokenFromWatchlist } from "./tokenWatchlist";
 import {
-  simulateNativeTransfer,
   readEvmTokenAllowances,
   readEvmTokenAllowance,
   revokeEvmTokenAllowance,

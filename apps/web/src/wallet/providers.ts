@@ -235,7 +235,7 @@ async function assertCurrentEvmWallet(
   if (chainId !== account.chainId || !Array.isArray(accounts) || !accounts.some(
     (address) => typeof address === "string" && address.toLowerCase() === account.address.toLowerCase(),
   )) {
-    throw new Error("The connected EVM account or network changed. Reconnect before managing token allowances.");
+    throw new Error("The connected EVM account or network changed. Reconnect before continuing.");
   }
 }
 
