@@ -331,6 +331,7 @@ export class SolanaSwapExecutionService {
       return { status: 'processing', signature: row.transactionSignature, error: null };
     }
     await this.controls.assertExecutionEnabled();
+    const executionAttemptId = randomUUID();
     let claimCount: number;
     try {
       const claim = await this.prisma.solanaSwapOrder.updateMany({
@@ -346,6 +347,7 @@ export class SolanaSwapExecutionService {
         data: {
           executionStatus: 'EXECUTING',
           executionKey: request.idempotencyKey,
+          executionAttemptId,
           transactionSignature: transactionSignature(decodedTransaction),
           signedTransactionHash,
         },
@@ -387,6 +389,7 @@ export class SolanaSwapExecutionService {
           userId,
           executionStatus: 'EXECUTING',
           executionKey: request.idempotencyKey,
+          executionAttemptId,
           signedTransactionHash,
         },
         data: {

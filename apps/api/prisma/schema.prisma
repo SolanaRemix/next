@@ -79,6 +79,7 @@ model SolanaSwapOrder {
   orderPayload           Json     @map("order_payload") @db.JsonB
   expiresAt              DateTime @map("expires_at") @db.Timestamptz(6)
   executionKey           String?  @map("execution_key") @db.VarChar(36)
+  executionAttemptId     String?  @map("execution_attempt_id") @db.Uuid
   executionStatus        String   @default("ORDERED") @map("execution_status") @db.VarChar(12)
   transactionSignature   String?  @map("transaction_signature") @db.VarChar(88)
   signedTransactionHash  String?  @map("signed_transaction_hash") @db.Char(64)
