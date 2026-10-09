@@ -46,6 +46,7 @@ export class EvmSwapController {
         minimumBuyAmount: order.minimumBuyAmount,
         expiresAt: order.expiresAt,
       }),
+      { recordSuccess: false },
     );
   }
 

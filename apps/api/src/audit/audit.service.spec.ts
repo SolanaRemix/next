@@ -73,4 +73,37 @@ describe('AuditService', () => {
       () => ({}),
     )).rejects.toThrow('database unavailable');
   });
+
+  it('can skip a success record owned by an atomic transaction while still auditing failures', async () => {
+    const { service, prisma } = createService();
+    const summarize = vi.fn(() => ({}));
+
+    await expect(service.track(
+      'user-id',
+      'swap.evm.order.requested',
+      { chainId: 1 },
+      async () => 'order',
+      summarize,
+      { recordSuccess: false },
+    )).resolves.toBe('order');
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(summarize).not.toHaveBeenCalled();
+
+    const failure = new BadRequestException('provider rejected order');
+    await expect(service.track(
+      'user-id',
+      'swap.evm.order.requested',
+      { chainId: 1 },
+      () => Promise.reject(failure),
+      summarize,
+      { recordSuccess: false },
+    )).rejects.toBe(failure);
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: 'user-id',
+        action: 'swap.evm.order.requested',
+        metadata: { chainId: 1, outcome: 'failure', failureStatus: 400 },
+      },
+    });
+  });
 });

@@ -108,7 +108,7 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
     }
   }
 
-  function createOrderRequest(): EvmSwapOrderRequest {
+  function createOrderRequest(idempotencyKey: string = crypto.randomUUID()): EvmSwapOrderRequest {
     if (!account || account.chain !== "evm") {
       throw new Error("Connect an EVM wallet before creating a swap order.");
     }
@@ -134,7 +134,7 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
       buyDecimals,
       maxSlippageBps: Math.round(slippagePercent * 100),
       taker: account.address,
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey,
     };
   }
 
@@ -146,15 +146,18 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
     try {
       if (!executionToken) throw new Error("Trader role is required to execute EVM swaps.");
       if (!account || account.chain !== "evm") throw new Error("Connect an EVM wallet before trading.");
-      const request = createOrderRequest();
+      const request = createOrderRequest(orderIdempotencyKey ?? crypto.randomUUID());
+      setOrderIdempotencyKey(request.idempotencyKey);
       const order = await requestEvmSwapOrder(request, executionToken);
       if (Date.parse(order.expiresAt) <= Date.now()) {
+        setOrderIdempotencyKey(null);
         throw new Error("Swap quote expired before it could be reviewed. Request a new order.");
       }
       setEvmOrder(order);
-      setOrderIdempotencyKey(request.idempotencyKey);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to request an executable 0x quote.");
+      const message = cause instanceof Error ? cause.message : "Unable to request an executable 0x quote.";
+      if (message.includes("order expired")) setOrderIdempotencyKey(null);
+      setError(message);
     } finally {
       setExecutionBusy(false);
     }

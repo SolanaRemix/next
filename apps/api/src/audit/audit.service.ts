@@ -15,6 +15,7 @@ export class AuditService {
     metadata: AuditMetadata,
     operation: () => Promise<T> | T,
     summarize: AuditSummary<T>,
+    options: { recordSuccess?: boolean } = {},
   ): Promise<T> {
     let result: T;
     try {
@@ -34,13 +35,15 @@ export class AuditService {
       throw error;
     }
 
-    await this.prisma.auditLog.create({
-      data: {
-        actorId,
-        action,
-        metadata: { ...metadata, ...summarize(result), outcome: 'success' },
-      },
-    });
+    if (options.recordSuccess !== false) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId,
+          action,
+          metadata: { ...metadata, ...summarize(result), outcome: 'success' },
+        },
+      });
+    }
     return result;
   }
 }

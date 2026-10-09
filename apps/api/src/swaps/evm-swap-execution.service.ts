@@ -174,7 +174,7 @@ export class EvmSwapExecutionService {
             'Financial execution is disabled by the global control.',
           );
         }
-        return transaction.evmSwapOrder.create({
+        const created = await transaction.evmSwapOrder.create({
           data: {
             userId,
             idempotencyKey: request.idempotencyKey,
@@ -195,6 +195,25 @@ export class EvmSwapExecutionService {
             expiresAt,
           },
         });
+        await transaction.auditLog.create({
+          data: {
+            actorId: userId,
+            action: 'swap.evm.order.requested',
+            metadata: {
+              chainId: request.chainId,
+              taker: request.taker,
+              sellToken: request.sellToken,
+              buyToken: request.buyToken,
+              sellAmount: request.sellAmount,
+              maxSlippageBps: request.maxSlippageBps,
+              minimumBuyAmount,
+              idempotencyKey: request.idempotencyKey,
+              executionId: created.id,
+              outcome: 'success',
+            } satisfies Prisma.InputJsonObject,
+          },
+        });
+        return created;
       });
       return {
         executionId: row.id,

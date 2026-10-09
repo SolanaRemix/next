@@ -137,6 +137,17 @@ describe('EvmSwapExecutionService', () => {
       }),
     }));
     expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        actorId: 'user-1',
+        action: 'swap.evm.order.requested',
+        metadata: expect.objectContaining({
+          executionId,
+          idempotencyKey,
+          outcome: 'success',
+        }),
+      }),
+    }));
   });
 
   it('does not admit a quote if the kill switch is disabled while 0x is responding', async () => {
