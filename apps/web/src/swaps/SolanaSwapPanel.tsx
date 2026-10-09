@@ -27,6 +27,13 @@ function toBaseUnits(amountValue: string, decimalsValue: string): string {
   return baseUnits.toString();
 }
 
+function formatBaseUnits(value: string, decimals: number): string {
+  const scale = 10n ** BigInt(decimals);
+  const amount = BigInt(value);
+  const fraction = (amount % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${amount / scale}.${fraction}` : (amount / scale).toString();
+}
+
 export interface SolanaSwapPanelProps {
   accessToken: string | null;
   account: WalletAccount | null;
@@ -42,6 +49,7 @@ export function SolanaSwapPanel({
   const [outputMint, setOutputMint] = useState("");
   const [amount, setAmount] = useState("");
   const [inputDecimals, setInputDecimals] = useState("9");
+  const [outputDecimals, setOutputDecimals] = useState("6");
   const [order, setOrder] = useState<SolanaSwapOrderResponse | null>(null);
   const [result, setResult] = useState<SolanaSwapExecuteResponse | null>(null);
   const [pending, setPending] = useState<{
@@ -149,7 +157,10 @@ export function SolanaSwapPanel({
             <input required type="number" min="0" max="18" step="1" value={inputDecimals} onChange={(event) => { setInputDecimals(event.target.value); clearOrder(); }} />
           </label>
         </div>
-        <p className="muted">Dynamic slippage (Jupiter RTSE) and provider-optimized landing fees are enabled. Jupiter handles submission and confirmation; MEV mitigation is not a guarantee.</p>
+        <label>Output token decimals
+          <input required type="number" min="0" max="18" step="1" value={outputDecimals} onChange={(event) => { setOutputDecimals(event.target.value); clearOrder(); }} />
+        </label>
+        <p className="muted">Dynamic slippage (Jupiter RTSE) and provider-managed landing-fee optimization are enabled. Jupiter handles submission and confirmation; MEV mitigation is not a guarantee, and the app does not set a fixed Jito tip.</p>
         <FlashButton type="submit" disabled={busy || !accessToken || !walletReady}>
           {busy ? "Requesting order…" : "Get dynamic swap order"}
         </FlashButton>
@@ -157,9 +168,9 @@ export function SolanaSwapPanel({
       {error && <p className="message message--error" role="alert">{error}</p>}
       {order && (
         <div className="swap-result" aria-live="polite">
-          <p><strong>Minimum output:</strong> {order.minimumOutputAmount} base units</p>
+          <p><strong>Minimum output:</strong> {formatBaseUnits(order.minimumOutputAmount, Number(outputDecimals))}</p>
           <p><strong>Dynamic slippage:</strong> {order.slippageBps} bps</p>
-          <p><strong>Estimated landing fee:</strong> {order.prioritizationFeeLamports === null ? "Provider-managed" : `${order.prioritizationFeeLamports} lamports`}</p>
+          <p><strong>Estimated landing fee:</strong> {order.prioritizationFeeLamports === null ? "Provider-managed" : `${order.prioritizationFeeLamports} lamports (provider-selected fees/tips)`}</p>
           <p><strong>Route:</strong> {order.router ?? "Jupiter multi-router"}</p>
           <p className="muted">Review the transaction in your wallet before approving. Order expires at {new Date(order.expiresAt).toLocaleTimeString()}.</p>
           <FlashButton type="button" onClick={() => void signAndExecute()} disabled={busy || !walletReady}>

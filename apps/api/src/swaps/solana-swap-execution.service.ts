@@ -21,6 +21,7 @@ const maxSolanaTransactionBytes = 1232;
 const maxU64 = 18_446_744_073_709_551_615n;
 const requestTimeoutMs = 15_000;
 const orderLifetimeMs = 60_000;
+const executionRetryWaitMs = 20_000;
 
 interface JupiterOrder {
   requestId: string;
@@ -61,6 +62,7 @@ function parseJupiterOrder(value: unknown, expected: SolanaSwapOrderRequest): Ju
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(order.transaction) ||
     order.transaction.length === 0 ||
     Buffer.from(order.transaction, 'base64').length > maxSolanaTransactionBytes ||
+    Buffer.from(order.transaction, 'base64').toString('base64') !== order.transaction ||
     order.inputMint !== expected.inputMint ||
     order.outputMint !== expected.outputMint ||
     order.inAmount !== expected.amount ||
@@ -252,15 +254,18 @@ export class SolanaSwapExecutionService {
     if (!row) throw new NotFoundException('Swap order was not found.');
 
     const previousResponse = toExecutionResponse(row.executionResult);
-    if (row.executionStatus !== 'ORDERED') {
+    if (row.executionStatus === 'SUCCEEDED' || row.executionStatus === 'FAILED') {
       if (row.executionKey !== request.idempotencyKey) {
         throw new ConflictException('This swap order has already been submitted.');
       }
       if (previousResponse) return previousResponse;
       return { status: 'processing', signature: null, error: null };
     }
-    if (row.expiresAt.getTime() <= Date.now()) {
+    if (row.executionStatus === 'ORDERED' && row.expiresAt.getTime() <= Date.now()) {
       throw new ConflictException('Swap order expired. Request a fresh order before signing.');
+    }
+    if (row.executionStatus === 'EXECUTING' && row.executionKey !== request.idempotencyKey) {
+      throw new ConflictException('This swap order has already been submitted.');
     }
 
     const apiKey = this.config.get<string>('JUPITER_API_KEY');
@@ -273,11 +278,34 @@ export class SolanaSwapExecutionService {
     ) {
       throw new ConflictException('Signed transaction is invalid or exceeds the Solana size limit.');
     }
-    const claim = await this.prisma.solanaSwapOrder.updateMany({
-      where: { id: row.id, userId, executionStatus: 'ORDERED', executionKey: null },
-      data: { executionStatus: 'EXECUTING', executionKey: request.idempotencyKey },
-    });
-    if (claim.count !== 1) {
+    const canRetryInFlight = row.executionStatus === 'EXECUTING' &&
+      row.expiresAt.getTime() > Date.now() &&
+      Date.now() - row.updatedAt.getTime() >= executionRetryWaitMs;
+    if (row.executionStatus === 'EXECUTING' && !canRetryInFlight) {
+      return { status: 'processing', signature: null, error: null };
+    }
+    let claimCount: number;
+    try {
+      const claim = await this.prisma.solanaSwapOrder.updateMany({
+        where: row.executionStatus === 'ORDERED'
+          ? { id: row.id, userId, executionStatus: 'ORDERED', executionKey: null }
+          : {
+            id: row.id,
+            userId,
+            executionStatus: 'EXECUTING',
+            executionKey: request.idempotencyKey,
+            updatedAt: row.updatedAt,
+          },
+        data: { executionStatus: 'EXECUTING', executionKey: request.idempotencyKey },
+      });
+      claimCount = claim.count;
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        throw new ConflictException('Execution idempotency key has already been used.');
+      }
+      throw error;
+    }
+    if (claimCount !== 1) {
       const latest = await this.prisma.solanaSwapOrder.findUnique({ where: { id: row.id } });
       if (
         latest?.executionKey === request.idempotencyKey &&
