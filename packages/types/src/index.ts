@@ -1,4 +1,5 @@
-export type UserRole = "SuperAdmin" | "EnterpriseAdmin" | "Trader" | "Viewer" | "Guest";
+export const USER_ROLES = ["SuperAdmin", "EnterpriseAdmin", "Trader", "Viewer", "Guest"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
 
 export type WalletChain = "evm" | "solana";
 

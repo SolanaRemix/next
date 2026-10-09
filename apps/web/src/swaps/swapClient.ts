@@ -29,13 +29,19 @@ function isRoute(value: unknown): value is SwapRouteQuote {
     (route.estimatedGas === undefined || typeof route.estimatedGas === "string");
 }
 
-export async function requestSwapQuote(request: SwapQuoteRequest): Promise<SwapQuoteResponse> {
+export async function requestSwapQuote(
+  request: SwapQuoteRequest,
+  accessToken: string,
+): Promise<SwapQuoteResponse> {
   const baseUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
   let response: Response;
   try {
     response = await fetch(`${baseUrl.replace(/\/+$/, "")}/swaps/quote`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer " + accessToken,
+      },
       body: JSON.stringify(request),
     });
   } catch {

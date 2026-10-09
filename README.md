@@ -5,8 +5,8 @@ An early monorepo foundation for the requested multi-chain wallet and onboarding
 ## Workspace
 
 - `apps/web` — React, TypeScript, and Vite frontend
-- `apps/api` — NestJS read-only perpetual risk-check and aggregator quote API
-- `packages/types` — shared wallet, onboarding, perpetual risk, and swap quote types
+- `apps/api` — NestJS API with PostgreSQL-backed JWT authentication, RBAC, rate limiting, risk checks, and aggregator quotes
+- `packages/types` — shared wallet, onboarding, auth roles, perpetual risk, and swap quote types
 - `packages/ui` — glassmorphism cards, flash buttons, badges, and theme styles
 - `packages/config` — shared theme tokens
 
@@ -18,6 +18,8 @@ Requires Node.js 22 or later and npm.
 
 ```sh
 npm install
+npm run db:generate --workspace @next/api
+npm run db:migrate --workspace @next/api
 npm run dev
 ```
 
@@ -27,7 +29,11 @@ In a second terminal, start the API:
 npm run dev:api
 ```
 
-The API listens on port `3001` by default. Set `PORT` to change it and `WEB_ORIGIN` to configure the single allowed browser origin.
+Copy `.env.example` to the repository root for the frontend, and `apps/api/.env.example` to `apps/api/.env`. Set the API `DATABASE_URL` and create a random `JWT_ACCESS_SECRET` with at least 32 bytes (for example, `openssl rand -base64 48`). Do not commit either `.env`. Migrations require a running PostgreSQL database. The API listens on port `3001` by default. Set `PORT` to change it and `WEB_ORIGIN` to configure the single allowed browser origin.
+
+Newly registered users receive only the `Guest` role. To bootstrap the first administrator, create the account through the UI, then run `BOOTSTRAP_ADMIN_EMAIL=admin@example.com npm run bootstrap:admin --workspace @next/api` once. The script refuses to run after a SuperAdmin exists and audits the promotion. Never expose database credentials or this operation to a public endpoint.
+
+After bootstrap, authenticated SuperAdmins can list active accounts with `GET /api/auth/users?limit=50` and assign roles with `PATCH /api/auth/users/:id/role` and a JSON body containing the desired `role`. Role changes are audited, and the last active SuperAdmin cannot be demoted.
 
 Configure `ZEROX_API_KEY` and `ONEINCH_API_KEY` on the API server for those providers; ParaSwap quoting is attempted without an API key. These secrets are never sent to the browser. Each provider is queried independently, so successful routes are returned when another provider is unavailable.
 
@@ -44,6 +50,8 @@ The Solana wallet uses the mainnet RPC endpoint by default. Set `VITE_SOLANA_RPC
 
 ## Current implementation scope
 
-The frontend currently includes wallet connection for injected EVM wallets and Phantom/Solflare-compatible Solana wallets, native balance reads, wallet-approved native transfers, skippable onboarding with local persistence and optional API synchronization, and EVM quotes compared across 0x, 1inch, and ParaSwap. The swap API returns indicative prices only; it does not construct, sign, or broadcast swap transactions. The NestJS API also exposes a perpetual margin/liquidation risk simulation only. The risk check does not place, sign, or broadcast orders. Its liquidation estimate is a simplified model, not an exchange quote or trading recommendation. The rest of the trading, database, authentication, PWA, and enterprise controls described in the product requirements are not implemented.
+The API now includes PostgreSQL-backed registration/login, hashed rotating refresh tokens in HttpOnly cookies, short-lived JWT access tokens, role guards, and request throttling. The throttle store is process-local; horizontally scaled deployments still need a shared Redis store. Financial-adjacent quote and risk-check endpoints require authenticated roles. Registration cannot assign privileged roles.
+
+The frontend includes session login, signup, and sign-out; wallet connection for injected EVM wallets and Phantom/Solflare-compatible Solana wallets; native balance reads and wallet-approved transfers; skippable onboarding; and EVM quotes compared across 0x, 1inch, and ParaSwap. The swap API returns indicative prices only; it does not construct, sign, or broadcast swap transactions. The perpetual endpoint is a simplified risk simulation and does not place, sign, or broadcast orders. These estimates are not exchange quotes or trading recommendations. Trading execution, wallet/token permission screens, session listing/revocation, enterprise role management, phishing/abuse controls, Redis-distributed throttling, and broader audit coverage remain incomplete; this is not yet a production-ready enterprise trading platform.
 
 Wallets retain control of private keys. The application does not request or store seed phrases or private keys. Review every network, recipient, amount, and fee in the wallet before approving a transaction.

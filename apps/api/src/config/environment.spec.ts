@@ -1,0 +1,28 @@
+import { describe, expect, it } from 'vitest';
+import { validateEnvironment } from './environment.js';
+
+const validConfig = {
+  DATABASE_URL: 'postgresql://localhost:5432/next?schema=public',
+  JWT_ACCESS_SECRET: 'a-valid-test-secret-with-more-than-thirty-two-bytes',
+  WEB_ORIGIN: 'https://example.com',
+};
+
+describe('validateEnvironment', () => {
+  it('accepts PostgreSQL configuration and a sufficiently strong JWT secret', () => {
+    expect(validateEnvironment(validConfig)).toEqual(validConfig);
+  });
+
+  it('rejects missing database configuration and weak signing secrets', () => {
+    expect(() => validateEnvironment({ ...validConfig, DATABASE_URL: '' }))
+      .toThrow(/DATABASE_URL/);
+    expect(() => validateEnvironment({ ...validConfig, JWT_ACCESS_SECRET: 'too-short' }))
+      .toThrow(/32 bytes/);
+  });
+
+  it('rejects invalid browser origins', () => {
+    expect(() => validateEnvironment({ ...validConfig, WEB_ORIGIN: 'https://example.com/path' }))
+      .toThrow(/WEB_ORIGIN/);
+    expect(() => validateEnvironment({ ...validConfig, WEB_ORIGIN: 'javascript:alert(1)' }))
+      .toThrow(/WEB_ORIGIN/);
+  });
+});

@@ -21,7 +21,12 @@ function currency(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-export function PerpetualTradingPanel() {
+export interface PerpetualTradingPanelProps {
+  accessToken: string | null;
+  authenticated: boolean;
+}
+
+export function PerpetualTradingPanel({ accessToken, authenticated }: PerpetualTradingPanelProps) {
   const [side, setSide] = useState<PerpetualSide>("long");
   const [marginMode, setMarginMode] = useState<MarginMode>("isolated");
   const [leverage, setLeverage] = useState(5);
@@ -42,6 +47,7 @@ export function PerpetualTradingPanel() {
     setError(null);
     setResult(null);
     try {
+      if (!accessToken) throw new Error("Sign in to access the risk service.");
       const request: PerpetualRiskCheckRequest = {
         side,
         marginMode,
@@ -53,7 +59,7 @@ export function PerpetualTradingPanel() {
         ...(values.takeProfit ? { takeProfit: Number(values.takeProfit) } : {}),
         ...(values.stopLoss ? { stopLoss: Number(values.stopLoss) } : {}),
       };
-      setResult(await checkPerpetualRisk(request));
+      setResult(await checkPerpetualRisk(request, accessToken));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to complete the risk check.");
     } finally {
@@ -94,7 +100,7 @@ export function PerpetualTradingPanel() {
           <label>Take-profit (optional)<input min="0.00000001" step="any" type="number" value={values.takeProfit} onChange={(event) => setField("takeProfit", event.target.value)} /></label>
           <label>Stop-loss (optional)<input min="0.00000001" step="any" type="number" value={values.stopLoss} onChange={(event) => setField("stopLoss", event.target.value)} /></label>
         </div>
-        <FlashButton type="submit" disabled={busy}>{busy ? "Checking risk…" : "Run backend risk check"}</FlashButton>
+        <FlashButton type="submit" disabled={busy || !accessToken}>{busy ? "Checking risk…" : accessToken ? "Run backend risk check" : authenticated ? "Trader role required" : "Sign in to run risk check"}</FlashButton>
       </form>
       {error && <p className="message message--error" role="alert">{error}</p>}
       {result && (

@@ -39,7 +39,12 @@ function formatTokenAmount(value: string, decimals: number): string {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-export function SwapPanel() {
+export interface SwapPanelProps {
+  accessToken: string | null;
+  authenticated: boolean;
+}
+
+export function SwapPanel({ accessToken, authenticated }: SwapPanelProps) {
   const [values, setValues] = useState(initialValues);
   const [quote, setQuote] = useState<SwapQuoteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +62,7 @@ export function SwapPanel() {
     setError(null);
     setBusy(true);
     try {
+      if (!accessToken) throw new Error("Sign in to access swap quotes.");
       const chainId = Number(values.chainId);
       const sellDecimals = Number(values.sellDecimals);
       const buyDecimals = Number(values.buyDecimals);
@@ -76,7 +82,7 @@ export function SwapPanel() {
       if (!Number.isInteger(buyDecimals) || buyDecimals < 0 || buyDecimals > 36) {
         throw new Error("Buy token decimals must be between 0 and 36.");
       }
-      setQuote(await requestSwapQuote(request));
+      setQuote(await requestSwapQuote(request, accessToken));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to request a swap quote.");
     } finally {
@@ -118,7 +124,7 @@ export function SwapPanel() {
           <label>Buy decimals<input required min="0" max="36" step="1" type="number" value={values.buyDecimals} onChange={(event) => update("buyDecimals", event.target.value)} /></label>
           <label>Max slippage (%)<input required min="0.01" max="50" step="0.01" type="number" value={values.slippagePercent} onChange={(event) => update("slippagePercent", event.target.value)} /></label>
         </div>
-        <FlashButton type="submit" disabled={busy}>{busy ? "Fetching routes…" : "Compare aggregator quotes"}</FlashButton>
+        <FlashButton type="submit" disabled={busy || !accessToken}>{busy ? "Fetching routes…" : accessToken ? "Compare aggregator quotes" : authenticated ? "Viewer role required" : "Sign in to compare quotes"}</FlashButton>
       </form>
       {error && <p className="message message--error" role="alert">{error}</p>}
       {quote && (

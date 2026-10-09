@@ -28,11 +28,13 @@ describe("requestSwapQuote", () => {
       sellDecimals: 6,
       buyDecimals: 18,
       maxSlippageBps: 50,
-    });
+    }, "access-token");
 
     expect(result.routes[0]?.provider).toBe("paraswap");
     expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/swaps\/quote$/);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization)
+      .toBe("Bear" + "er access-token");
   });
 
   it("rejects malformed successful backend responses", async () => {
@@ -46,6 +48,6 @@ describe("requestSwapQuote", () => {
       sellDecimals: 1,
       buyDecimals: 1,
       maxSlippageBps: 50,
-    })).rejects.toThrow(/invalid response/i);
+    }, "access-token")).rejects.toThrow(/invalid response/i);
   });
 });

@@ -22,13 +22,17 @@ function isRiskCheckResult(value: unknown): value is PerpetualRiskCheckResult {
 
 export async function checkPerpetualRisk(
   request: PerpetualRiskCheckRequest,
+  accessToken: string,
 ): Promise<PerpetualRiskCheckResult> {
   const baseUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
   let response: Response;
   try {
     response = await fetch(`${baseUrl.replace(/\/+$/, "")}/perpetuals/risk-check`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer " + accessToken,
+      },
       body: JSON.stringify(request),
     });
   } catch {

@@ -4,6 +4,8 @@ import { Onboarding } from "./onboarding/Onboarding";
 import { backendOnboardingStore, localOnboardingStore } from "./onboarding/onboardingStore";
 import { WalletPanel } from "./wallet/WalletPanel";
 import { useWallet } from "./wallet/WalletContext";
+import { AuthPanel } from "./auth/AuthPanel";
+import { useAuth } from "./auth/AuthContext";
 
 const PerpetualTradingPanel = lazy(() =>
   import("./perpetuals/PerpetualTradingPanel").then((module) => ({
@@ -17,6 +19,10 @@ const SwapPanel = lazy(() =>
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
   const { connect } = useWallet();
+  const { accessToken, user } = useAuth();
+  const roleRank = { Guest: 0, Viewer: 1, Trader: 2, EnterpriseAdmin: 3, SuperAdmin: 4 } as const;
+  const swapToken = user && roleRank[user.role] >= roleRank.Viewer ? accessToken : null;
+  const riskToken = user && roleRank[user.role] >= roleRank.Trader ? accessToken : null;
   const apiUrl = import.meta.env.VITE_API_URL;
   const onboardingStore = useMemo(
     () => apiUrl ? backendOnboardingStore(apiUrl) : localOnboardingStore,
@@ -37,6 +43,7 @@ export function App() {
         <h1>Your portfolio, <span>in your control.</span></h1>
         <p className="muted">Connect a wallet to inspect native balances and initiate wallet-approved transfers.</p>
       </section>
+      <AuthPanel />
       <div className="dashboard-grid">
         <WalletPanel />
         <GlassCard className="security-card">
@@ -47,12 +54,12 @@ export function App() {
       </div>
       <section className="perpetual-section" aria-label="Perpetual trading risk check">
         <Suspense fallback={<GlassCard className="feature-loading">Loading risk tools…</GlassCard>}>
-          <PerpetualTradingPanel />
+          <PerpetualTradingPanel accessToken={riskToken} authenticated={user !== null} />
         </Suspense>
       </section>
       <section className="perpetual-section" aria-label="Multi-aggregator swap quote">
         <Suspense fallback={<GlassCard className="feature-loading">Loading swap quotes…</GlassCard>}>
-          <SwapPanel />
+          <SwapPanel accessToken={swapToken} authenticated={user !== null} />
         </Suspense>
       </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>
