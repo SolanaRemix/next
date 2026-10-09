@@ -31,7 +31,9 @@ export class PortfolioPricesService {
     chainId: string,
     tokenAddresses: readonly string[],
   ): Promise<EvmPortfolioPricesResponse> {
-    const metadata = chainMetadata[chainId];
+    const metadata = Object.prototype.hasOwnProperty.call(chainMetadata, chainId)
+      ? chainMetadata[chainId]
+      : undefined;
     if (!metadata) throw new ServiceUnavailableException('Pricing is unavailable for this EVM network.');
     if (tokenAddresses.length > maxTokenAddresses ||
       tokenAddresses.some((address) => !/^0x[a-fA-F0-9]{40}$/.test(address))) {
@@ -50,7 +52,10 @@ export class PortfolioPricesService {
       ? this.fetchJson(this.tokenPricesUrl(metadata.platform, normalizedAddresses), apiKey)
       : Promise.resolve({} as Record<string, unknown>);
     const [nativeResult, tokenResult] = await Promise.allSettled([nativeRequest, tokenRequest]);
-    if (nativeResult.status === 'rejected' && tokenResult.status === 'rejected') {
+    if (
+      nativeResult.status === 'rejected' &&
+      (normalizedAddresses.length === 0 || tokenResult.status === 'rejected')
+    ) {
       throw new ServiceUnavailableException('Portfolio price provider is unavailable.');
     }
 

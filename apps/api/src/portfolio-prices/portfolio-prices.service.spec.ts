@@ -62,11 +62,14 @@ describe('PortfolioPricesService', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status: 429 })));
     await expect(createService().getEvmPrices('0x1', [tokenAddress]))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(createService().getEvmPrices('0x1', []))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('rejects unsupported chains and malformed or excessive token lists', async () => {
     const service = createService();
     await expect(service.getEvmPrices('0x999', [])).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(service.getEvmPrices('__proto__', [])).rejects.toBeInstanceOf(ServiceUnavailableException);
     await expect(service.getEvmPrices('0x1', ['invalid'])).rejects.toBeInstanceOf(BadRequestException);
     await expect(service.getEvmPrices('0x1', Array(51).fill(tokenAddress))).rejects.toBeInstanceOf(BadRequestException);
   });
