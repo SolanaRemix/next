@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { SolanaSwapExecutionService } from './solana-swap-execution.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
+import type { FinancialControlsService } from '../financial-controls/financial-controls.service.js';
 
 const executionId = 'afe6024a-5cd2-48d4-b47c-69f0c73aa161';
 const idempotencyKey = '9deddb44-b4b0-46b0-9fd6-5cde616fdba4';
@@ -50,13 +51,16 @@ function createPrismaMock() {
 describe('SolanaSwapExecutionService', () => {
   const prisma = createPrismaMock();
   const config = { get: vi.fn(() => 'jupiter-test-key') };
+  const controls = { assertExecutionEnabled: vi.fn(async () => undefined) };
   const service = new SolanaSwapExecutionService(
     config as unknown as ConfigService,
     prisma as unknown as PrismaService,
+    controls as unknown as FinancialControlsService,
   );
 
   beforeEach(() => {
     vi.clearAllMocks();
+    controls.assertExecutionEnabled.mockResolvedValue(undefined);
     prisma.solanaSwapOrder.findUnique.mockResolvedValue(null);
   });
 
@@ -83,6 +87,16 @@ describe('SolanaSwapExecutionService', () => {
       slippageBps: 100,
       prioritizationFeeLamports: 12000,
       minimumOutputAmount: '2475000',
+    });
+
+    it('blocks order creation while the global execution control is disabled', async () => {
+      controls.assertExecutionEnabled.mockRejectedValueOnce(new Error('disabled'));
+      const fetch = vi.fn();
+      vi.stubGlobal('fetch', fetch);
+
+      await expect(service.order('user-1', request)).rejects.toThrow('disabled');
+      expect(fetch).not.toHaveBeenCalled();
+      expect(prisma.solanaSwapOrder.findUnique).not.toHaveBeenCalled();
     });
     expect(result.executionId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(prisma.solanaSwapOrder.create).toHaveBeenCalledWith(expect.objectContaining({

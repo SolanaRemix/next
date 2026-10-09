@@ -15,6 +15,7 @@ import type {
   SolanaSwapOrderResponse,
 } from '@next/types';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { FinancialControlsService } from '../financial-controls/financial-controls.service.js';
 
 const jupiterBaseUrl = 'https://api.jup.ag/swap/v2';
 const maxSolanaTransactionBytes = 1232;
@@ -206,9 +207,11 @@ export class SolanaSwapExecutionService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly controls: FinancialControlsService,
   ) {}
 
   async order(userId: string, request: SolanaSwapOrderRequest): Promise<SolanaSwapOrderResponse> {
+    await this.controls.assertExecutionEnabled();
     if (request.inputMint === request.outputMint) {
       throw new ConflictException('Input and output tokens must be different.');
     }
@@ -326,6 +329,7 @@ export class SolanaSwapExecutionService {
     if (row.executionStatus === 'EXECUTING' && !canRetryInFlight) {
       return { status: 'processing', signature: row.transactionSignature, error: null };
     }
+    await this.controls.assertExecutionEnabled();
     let claimCount: number;
     try {
       const claim = await this.prisma.solanaSwapOrder.updateMany({

@@ -4,9 +4,10 @@ import { SwapQuoteService } from './swap-quote.service.js';
 import { SwapsController } from './swaps.controller.js';
 import { SolanaSwapController } from './solana-swap.controller.js';
 import { SolanaSwapExecutionService } from './solana-swap-execution.service.js';
+import { FinancialControlsModule } from '../financial-controls/financial-controls.module.js';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, FinancialControlsModule],
   controllers: [SwapsController, SolanaSwapController],
   providers: [SwapQuoteService, SolanaSwapExecutionService],
 })

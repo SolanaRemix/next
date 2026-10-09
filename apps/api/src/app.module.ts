@@ -13,6 +13,7 @@ import { SwapsModule } from './swaps/swaps.module.js';
 import { validateEnvironment } from './config/environment.js';
 import { GeographicAccessGuard } from './geo/geographic-access.guard.js';
 import { SolanaMarketModule } from './solana-market/solana-market.module.js';
+import { FinancialControlsModule } from './financial-controls/financial-controls.module.js';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { SolanaMarketModule } from './solana-market/solana-market.module.js';
     AuthModule,
     PerpetualsModule,
     SolanaMarketModule,
+    FinancialControlsModule,
     SwapsModule,
   ],
   providers: [

@@ -92,3 +92,12 @@ model SolanaSwapOrder {
   @@index([expiresAt])
   @@map("solana_swap_orders")
 }
+
+model FinancialOperationsControl {
+  id        String   @id @db.VarChar(32)
+  enabled   Boolean  @default(false)
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("financial_operations_controls")
+}
