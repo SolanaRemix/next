@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Keypair,
-  TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
 import { signSolanaVersionedTransaction } from "./solanaProviders";
@@ -16,17 +15,21 @@ const walletAccount = {
 const originalProvider = window.solana;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (originalProvider) window.solana = originalProvider;
   else delete window.solana;
 });
 
-function makeTransaction(): VersionedTransaction {
-  const message = new TransactionMessage({
-    payerKey: account.publicKey,
-    recentBlockhash: Keypair.generate().publicKey.toBase58(),
-    instructions: [],
-  }).compileToV0Message();
-  return new VersionedTransaction(message);
+function mockTransaction(): VersionedTransaction {
+  return {
+    message: {
+      serialize: () => new Uint8Array([1, 2, 3]),
+      staticAccountKeys: [account.publicKey],
+      header: { numRequiredSignatures: 1 },
+    },
+    signatures: [new Uint8Array(64)],
+    serialize: () => new Uint8Array([4, 5, 6]),
+  } as unknown as VersionedTransaction;
 }
 
 function base64(value: Uint8Array): string {
@@ -37,7 +40,8 @@ function base64(value: Uint8Array): string {
 
 describe("signSolanaVersionedTransaction", () => {
   it("signs a versioned transaction without changing the wallet-approved message", async () => {
-    const unsigned = makeTransaction();
+    const unsigned = mockTransaction();
+    vi.spyOn(VersionedTransaction, "deserialize").mockReturnValue(unsigned);
     window.solana = {
       publicKey: account.publicKey,
       connect: vi.fn(),
@@ -51,14 +55,12 @@ describe("signSolanaVersionedTransaction", () => {
 
     const signedBase64 = await signSolanaVersionedTransaction(
       walletAccount,
-      base64(unsigned.serialize()),
-    );
-    const signed = VersionedTransaction.deserialize(
-      Uint8Array.from(atob(signedBase64), (character) => character.charCodeAt(0)),
+      "AQ==",
     );
 
-    expect(signed.message.serialize()).toEqual(unsigned.message.serialize());
-    expect(signed.signatures[0]?.every((byte) => byte === 1)).toBe(true);
+    expect(unsigned.message.serialize()).toEqual(new Uint8Array([1, 2, 3]));
+    expect(unsigned.signatures[0]?.every((byte) => byte === 1)).toBe(true);
+    expect(signedBase64).toBe(base64(new Uint8Array([4, 5, 6])));
   });
 
   it("rejects a changed connected account before requesting a signature", async () => {
@@ -72,7 +74,7 @@ describe("signSolanaVersionedTransaction", () => {
     };
 
     await expect(
-      signSolanaVersionedTransaction(walletAccount, base64(makeTransaction().serialize())),
+      signSolanaVersionedTransaction(walletAccount, "AQ=="),
     ).rejects.toThrow(/account changed/i);
     expect(signTransaction).not.toHaveBeenCalled();
   });
