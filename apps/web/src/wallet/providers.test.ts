@@ -247,3 +247,111 @@ describe("fetchEvmTokenBalances", () => {
     await expect(fetchEvmTokenBalances(account, [tokenAddress])).rejects.toThrow(/account or network changed/i);
   });
 });
+
+describe("EVM token allowance management", () => {
+  const account: WalletAccount = {
+    address: "0x1111111111111111111111111111111111111111",
+    chain: "evm",
+    chainId: "0x1",
+    connectedAt: new Date().toISOString(),
+  };
+  const token = "0x2222222222222222222222222222222222222222";
+  const spender = "0x3333333333333333333333333333333333333333";
+  const allowanceCall = "0xdd62ed3e" +
+    account.address.slice(2).toLowerCase().padStart(64, "0") +
+    spender.slice(2).toLowerCase().padStart(64, "0");
+  const transactionHash = `0x${"a".repeat(64)}`;
+  const word = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
+
+  it("reads allowances only for the connected account and active network", async () => {
+    const request = vi.fn(async ({ method, params }: { method: string; params?: readonly unknown[] }) => {
+      if (method === "eth_chainId") return "0x1";
+      if (method === "eth_accounts") return [account.address];
+      if (method === "eth_call") {
+        expect(params?.[0]).toEqual({ to: token, data: allowanceCall });
+        return word(123n);
+      }
+      throw new Error(`Unexpected wallet method: ${method}`);
+    });
+    window.ethereum = { request };
+
+    await expect(readEvmTokenAllowance(account, token, spender)).resolves.toBe(123n);
+    expect(request.mock.calls.filter(([args]) => args.method === "eth_chainId")).toHaveLength(2);
+  });
+
+  it("simulates, estimates, wallet-submits, and confirms zero allowance before reporting revoke", async () => {
+    let allowanceReads = 0;
+    const request = vi.fn(async ({ method, params }: { method: string; params?: readonly unknown[] }) => {
+      if (method === "eth_chainId") return "0x1";
+      if (method === "eth_accounts") return [account.address];
+      if (method === "eth_call") {
+        const transaction = params?.[0] as { to?: string; data?: string };
+        if (transaction.data?.startsWith("0xdd62ed3e")) {
+          allowanceReads += 1;
+          return allowanceReads < 3 ? word(100n) : word(0n);
+        }
+        return "0x";
+      }
+      if (method === "eth_estimateGas") return "0x5208";
+      if (method === "eth_sendTransaction") return transactionHash;
+      if (method === "eth_getTransactionReceipt") return { status: "0x1" };
+      throw new Error(`Unexpected wallet method: ${method}`);
+    });
+    window.ethereum = { request };
+
+    await expect(revokeEvmTokenAllowance(account, token, spender)).resolves.toBe(transactionHash);
+    const simulation = request.mock.calls.find(([args]) =>
+      args.method === "eth_call" && (args.params?.[0] as { data?: string }).data?.startsWith("0x095ea7b3"));
+    expect(simulation?.[0].params?.[0]).toMatchObject({
+      from: account.address,
+      to: token,
+      value: "0x0",
+      data: `0x095ea7b3${spender.slice(2).toLowerCase().padStart(64, "0")}${"0".repeat(64)}`,
+    });
+    const sent = request.mock.calls.find(([args]) => args.method === "eth_sendTransaction");
+    expect(sent?.[0].params?.[0]).toMatchObject({
+      from: account.address,
+      to: token,
+      data: `0x095ea7b3${spender.slice(2).toLowerCase().padStart(64, "0")}${"0".repeat(64)}`,
+      gas: "0x5208",
+    });
+    expect(request.mock.calls.some(([args]) => args.method === "eth_getTransactionReceipt")).toBe(true);
+  });
+
+  it("fails closed without sending when simulation fails, allowance is zero, or the account changes", async () => {
+    const createProvider = (allowanceResult: string, simulationFails = false, switchAccount = false) => {
+      let accountReads = 0;
+      return vi.fn(async ({ method, params }: { method: string; params?: readonly unknown[] }) => {
+        if (method === "eth_chainId") return "0x1";
+        if (method === "eth_accounts") {
+          accountReads += 1;
+          return switchAccount && accountReads > 1 ? [spender] : [account.address];
+        }
+        if (method === "eth_call") {
+          const transaction = params?.[0] as { data?: string };
+          if (transaction.data?.startsWith("0xdd62ed3e")) return allowanceResult;
+          if (simulationFails) throw new Error("simulation revert");
+          return "0x";
+        }
+        if (method === "eth_estimateGas") return "0x5208";
+        if (method === "eth_sendTransaction") return transactionHash;
+        if (method === "eth_getTransactionReceipt") return { status: "0x1" };
+        throw new Error(`Unexpected wallet method: ${method}`);
+      });
+    };
+    const zeroAllowanceRequest = createProvider(word(0n));
+    window.ethereum = { request: zeroAllowanceRequest };
+    await expect(revokeEvmTokenAllowance(account, token, spender)).rejects.toThrow(/already has zero allowance/i);
+    expect(zeroAllowanceRequest.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
+
+    const simulationRequest = createProvider(word(1n), true);
+    window.ethereum = { request: simulationRequest };
+    await expect(revokeEvmTokenAllowance(account, token, spender)).rejects.toThrow(/simulation revert/);
+    expect(simulationRequest.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
+
+    const switchedAccountRequest = createProvider(word(1n), false, true);
+    window.ethereum = { request: switchedAccountRequest };
+    await expect(readEvmTokenAllowance(account, token, spender)).rejects.toThrow(/account or network changed/i);
+    expect(switchedAccountRequest.mock.calls.some(([args]) => args.method === "eth_call")).toBe(true);
+  });
+});
