@@ -200,7 +200,12 @@ describe('AuthService', () => {
     const { service, transaction } = createFixture();
     transaction.user.findFirst
       .mockResolvedValueOnce({ id: 'admin-id' })
-      .mockResolvedValueOnce({ id: 'admin-id', email: 'admin@example.com', role: UserRole.SuperAdmin });
+      .mockResolvedValueOnce({
+        id: 'admin-id',
+        email: 'admin@example.com',
+        role: UserRole.SuperAdmin,
+        accountStatus: AccountStatus.Active,
+      });
     transaction.user.count.mockResolvedValue(1);
 
     await expect(service.assignRole('admin-id', 'admin-id', UserRole.Guest))

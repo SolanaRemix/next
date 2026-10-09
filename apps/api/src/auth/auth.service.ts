@@ -182,12 +182,20 @@ export class AuthService {
       if (!actor) throw new UnauthorizedException('SuperAdmin access is required.');
       const target = await transaction.user.findFirst({
         where: { id: targetId, deletedAt: null },
-        select: { id: true, email: true, role: true },
+        select: { id: true, email: true, role: true, accountStatus: true },
       });
       if (!target) throw new NotFoundException('User not found.');
-      if (target.role === UserRole.SuperAdmin && role !== UserRole.SuperAdmin) {
+      if (
+        target.role === UserRole.SuperAdmin &&
+        target.accountStatus === AccountStatus.Active &&
+        role !== UserRole.SuperAdmin
+      ) {
         const count = await transaction.user.count({
-          where: { role: UserRole.SuperAdmin, deletedAt: null },
+          where: {
+            role: UserRole.SuperAdmin,
+            accountStatus: AccountStatus.Active,
+            deletedAt: null,
+          },
         });
         if (count <= 1) {
           throw new ConflictException('The last SuperAdmin cannot be demoted.');
