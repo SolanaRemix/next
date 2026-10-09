@@ -129,81 +129,6 @@ describe("fetchSolanaTokenBalances", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
-  describe("Solana native transfer simulation", () => {
-    const destination = Keypair.generate().publicKey.toBase58();
-    const transferRequest = {
-      chain: "solana" as const,
-      chainId: "mainnet-beta",
-      to: destination,
-      amount: "0.5",
-    };
-
-    function mockRpc(simulationError: unknown = null, balance = 2_000_000_000) {
-      vi.spyOn(Connection.prototype, "getLatestBlockhash").mockResolvedValue({
-        blockhash: Keypair.generate().publicKey.toBase58(),
-        lastValidBlockHeight: 100,
-      });
-      const simulate = vi.spyOn(Connection.prototype, "simulateTransaction").mockResolvedValue({
-        context: { slot: 1 },
-        value: { err: simulationError, logs: [], accounts: null, unitsConsumed: 200 },
-      });
-      vi.spyOn(Connection.prototype, "getFeeForMessage").mockResolvedValue({
-        context: { slot: 1 },
-        value: 5_000,
-      });
-      vi.spyOn(Connection.prototype, "getBalance").mockResolvedValue(balance);
-      return simulate;
-    }
-
-    it("simulates and estimates the fee before wallet submission, then re-simulates on send", async () => {
-      const simulate = mockRpc();
-      const signAndSendTransaction = vi.fn(async () => "1".repeat(64));
-      window.solana = {
-        publicKey: account.publicKey,
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        signAndSendTransaction,
-      };
-
-      await expect(simulateSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toMatchObject({
-        chain: "solana",
-        asset: "SOL",
-        recipient: destination,
-        amount: "0.5",
-        estimatedFee: "0.000005",
-        totalEstimatedDebit: "0.500005",
-      });
-      expect(signAndSendTransaction).not.toHaveBeenCalled();
-
-      await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toEqual({
-        chain: "solana",
-        transactionId: "1".repeat(64),
-        status: "submitted",
-      });
-      expect(simulate).toHaveBeenCalledTimes(2);
-      expect(signAndSendTransaction).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not request wallet submission after simulation failure or an insufficient balance", async () => {
-      const signAndSendTransaction = vi.fn(async () => "1".repeat(64));
-      window.solana = {
-        publicKey: account.publicKey,
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        signAndSendTransaction,
-      };
-      mockRpc({ InstructionError: [0, "Custom"] });
-      await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).rejects.toThrow(/simulation rejected/i);
-      expect(signAndSendTransaction).not.toHaveBeenCalled();
-
-      vi.restoreAllMocks();
-      window.solana.publicKey = account.publicKey;
-      mockRpc(null, 500_000_000);
-      await expect(simulateSolanaNativeTransfer(walletAccount, transferRequest)).rejects.toThrow(/insufficient SOL balance/i);
-      expect(signAndSendTransaction).not.toHaveBeenCalled();
-    });
-  });
-
   it("rejects stale connected accounts and malformed token account data", async () => {
     window.solana = {
       publicKey: Keypair.generate().publicKey,
@@ -221,5 +146,80 @@ describe("fetchSolanaTokenBalances", () => {
       value: [{ account: { data: { parsed: { info: {} } } } }],
     }) as never);
     await expect(fetchSolanaTokenBalances(walletAccount)).rejects.toThrow(/invalid token amount/i);
+  });
+});
+
+describe("Solana native transfer simulation", () => {
+  const destination = Keypair.generate().publicKey.toBase58();
+  const transferRequest = {
+    chain: "solana" as const,
+    chainId: "mainnet-beta",
+    to: destination,
+    amount: "0.5",
+  };
+
+  function mockRpc(simulationError: unknown = null, balance = 2_000_000_000) {
+    vi.spyOn(Connection.prototype, "getLatestBlockhash").mockResolvedValue({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: 100,
+    });
+    const simulate = vi.spyOn(Connection.prototype, "simulateTransaction").mockResolvedValue({
+      context: { slot: 1 },
+      value: { err: simulationError as never, logs: [], accounts: null, unitsConsumed: 200 },
+    });
+    vi.spyOn(Connection.prototype, "getFeeForMessage").mockResolvedValue({
+      context: { slot: 1 },
+      value: 5_000,
+    });
+    vi.spyOn(Connection.prototype, "getBalance").mockResolvedValue(balance);
+    return simulate;
+  }
+
+  it("simulates and estimates the fee before wallet submission, then re-simulates on send", async () => {
+    const simulate = mockRpc();
+    const signAndSendTransaction = vi.fn(async () => "1".repeat(64));
+    window.solana = {
+      publicKey: account.publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction,
+    };
+
+    await expect(simulateSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toMatchObject({
+      chain: "solana",
+      asset: "SOL",
+      recipient: destination,
+      amount: "0.5",
+      estimatedFee: "0.000005",
+      totalEstimatedDebit: "0.500005",
+    });
+    expect(signAndSendTransaction).not.toHaveBeenCalled();
+
+    await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toEqual({
+      chain: "solana",
+      transactionId: "1".repeat(64),
+      status: "submitted",
+    });
+    expect(simulate).toHaveBeenCalledTimes(2);
+    expect(signAndSendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not request wallet submission after simulation failure or an insufficient balance", async () => {
+    const signAndSendTransaction = vi.fn(async () => "1".repeat(64));
+    window.solana = {
+      publicKey: account.publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction,
+    };
+    mockRpc({ InstructionError: [0, "Custom"] });
+    await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).rejects.toThrow(/simulation rejected/i);
+    expect(signAndSendTransaction).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+    window.solana.publicKey = account.publicKey;
+    mockRpc(null, 500_000_000);
+    await expect(simulateSolanaNativeTransfer(walletAccount, transferRequest)).rejects.toThrow(/insufficient SOL balance/i);
+    expect(signAndSendTransaction).not.toHaveBeenCalled();
   });
 });

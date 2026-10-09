@@ -193,89 +193,6 @@ describe("fetchEvmTokenBalances", () => {
       throw new Error(`Unexpected wallet method: ${method}`);
     });
 
-    describe("EVM native transfer simulation", () => {
-      const account: WalletAccount = {
-        address: "0x1111111111111111111111111111111111111111",
-        chain: "evm",
-        chainId: "0x1",
-        connectedAt: new Date().toISOString(),
-      };
-      const request = {
-        chain: "evm" as const,
-        to: "0x2222222222222222222222222222222222222222",
-        amount: "0.1",
-        chainId: "0x1",
-      };
-      const txHash = `0x${"c".repeat(64)}`;
-
-      it("previews gas, checks funds, and re-simulates before wallet submission", async () => {
-        const calls: string[] = [];
-        const walletRequest = vi.fn(async ({ method, params }: { method: string; params?: readonly unknown[] }) => {
-          calls.push(method);
-          if (method === "eth_chainId") return "0x1";
-          if (method === "eth_accounts") return [account.address];
-          if (method === "eth_call") return "0x";
-          if (method === "eth_estimateGas") return "0x5208";
-          if (method === "eth_gasPrice") return "0x3b9aca00";
-          if (method === "eth_getBalance") return "0x1bc16d674ec80000";
-          if (method === "eth_sendTransaction") return txHash;
-          throw new Error(`Unexpected wallet method: ${method}`);
-        });
-        window.ethereum = { request: walletRequest };
-
-        await expect(simulateNativeTransfer(account, request)).resolves.toMatchObject({
-          asset: "ETH",
-          recipient: request.to,
-          amount: "0.1",
-          estimatedFee: "0.000021",
-          totalEstimatedDebit: "0.100021",
-        });
-        expect(walletRequest.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
-
-        await expect(sendNativeTransfer(account, request)).resolves.toEqual({
-          chain: "evm",
-          transactionId: txHash,
-          status: "submitted",
-        });
-        const sendIndex = calls.indexOf("eth_sendTransaction");
-        expect(sendIndex).toBeGreaterThan(calls.lastIndexOf("eth_call"));
-        const sent = walletRequest.mock.calls.find(([args]) => args.method === "eth_sendTransaction");
-        expect(sent?.[0].params?.[0]).toMatchObject({
-          from: account.address,
-          to: request.to,
-          value: "0x16345785d8a0000",
-          gas: "0x5208",
-        });
-      });
-
-      it("does not send when simulation fails or estimated funds are insufficient", async () => {
-        const createProvider = (simulationFails: boolean, balance: string) => vi.fn(
-          async ({ method }: { method: string }) => {
-            if (method === "eth_chainId") return "0x1";
-            if (method === "eth_accounts") return [account.address];
-            if (method === "eth_call") {
-              if (simulationFails) throw new Error("execution reverted");
-              return "0x";
-            }
-            if (method === "eth_estimateGas") return "0x5208";
-            if (method === "eth_gasPrice") return "0x3b9aca00";
-            if (method === "eth_getBalance") return balance;
-            if (method === "eth_sendTransaction") return txHash;
-            throw new Error(`Unexpected wallet method: ${method}`);
-          },
-        );
-        const reverted = createProvider(true, "0x1bc16d674ec80000");
-        window.ethereum = { request: reverted };
-        await expect(sendNativeTransfer(account, request)).rejects.toThrow(/execution reverted/);
-        expect(reverted.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
-
-        const insufficient = createProvider(false, "0x16345785d8a0000");
-        window.ethereum = { request: insufficient };
-        await expect(simulateNativeTransfer(account, request)).rejects.toThrow(/insufficient native balance/i);
-        expect(insufficient.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
-      });
-    });
-
     window.ethereum = { request };
 
     await expect(fetchEvmTokenBalances(account, [tokenAddress])).resolves.toEqual([{
@@ -438,5 +355,89 @@ describe("EVM token allowance management", () => {
     window.ethereum = { request: switchedAccountRequest };
     await expect(readEvmTokenAllowance(account, token, spender)).rejects.toThrow(/account or network changed/i);
     expect(switchedAccountRequest.mock.calls.some(([args]) => args.method === "eth_call")).toBe(true);
+  });
+});
+
+describe("EVM native transfer simulation", () => {
+  const account: WalletAccount = {
+    address: "0x1111111111111111111111111111111111111111",
+    chain: "evm",
+    chainId: "0x1",
+    connectedAt: new Date().toISOString(),
+  };
+  const request = {
+    chain: "evm" as const,
+    to: "0x2222222222222222222222222222222222222222",
+    amount: "0.1",
+    chainId: "0x1",
+  };
+  const txHash = `0x${"c".repeat(64)}`;
+
+  it("previews gas, checks funds, and re-simulates before wallet submission", async () => {
+    const calls: string[] = [];
+    const walletRequest = vi.fn(async ({ method, params }: { method: string; params?: readonly unknown[] }) => {
+      void params;
+      calls.push(method);
+      if (method === "eth_chainId") return "0x1";
+      if (method === "eth_accounts") return [account.address];
+      if (method === "eth_call") return "0x";
+      if (method === "eth_estimateGas") return "0x5208";
+      if (method === "eth_gasPrice") return "0x3b9aca00";
+      if (method === "eth_getBalance") return "0x1bc16d674ec80000";
+      if (method === "eth_sendTransaction") return txHash;
+      throw new Error(`Unexpected wallet method: ${method}`);
+    });
+    window.ethereum = { request: walletRequest };
+
+    await expect(simulateNativeTransfer(account, request)).resolves.toMatchObject({
+      asset: "ETH",
+      recipient: request.to,
+      amount: "0.1",
+      estimatedFee: "0.000021",
+      totalEstimatedDebit: "0.100021",
+    });
+    expect(walletRequest.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
+
+    await expect(sendNativeTransfer(account, request)).resolves.toEqual({
+      chain: "evm",
+      transactionId: txHash,
+      status: "submitted",
+    });
+    const sendIndex = calls.indexOf("eth_sendTransaction");
+    expect(sendIndex).toBeGreaterThan(calls.lastIndexOf("eth_call"));
+    const sent = walletRequest.mock.calls.find(([args]) => args.method === "eth_sendTransaction");
+    expect(sent?.[0].params?.[0]).toMatchObject({
+      from: account.address,
+      to: request.to,
+      value: "0x16345785d8a0000",
+      gas: "0x5208",
+    });
+  });
+
+  it("does not send when simulation fails or estimated funds are insufficient", async () => {
+    const createProvider = (simulationFails: boolean, balance: string) => vi.fn(
+      async ({ method }: { method: string }) => {
+        if (method === "eth_chainId") return "0x1";
+        if (method === "eth_accounts") return [account.address];
+        if (method === "eth_call") {
+          if (simulationFails) throw new Error("execution reverted");
+          return "0x";
+        }
+        if (method === "eth_estimateGas") return "0x5208";
+        if (method === "eth_gasPrice") return "0x3b9aca00";
+        if (method === "eth_getBalance") return balance;
+        if (method === "eth_sendTransaction") return txHash;
+        throw new Error(`Unexpected wallet method: ${method}`);
+      },
+    );
+    const reverted = createProvider(true, "0x1bc16d674ec80000");
+    window.ethereum = { request: reverted };
+    await expect(sendNativeTransfer(account, request)).rejects.toThrow(/execution reverted/);
+    expect(reverted.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
+
+    const insufficient = createProvider(false, "0x16345785d8a0000");
+    window.ethereum = { request: insufficient };
+    await expect(simulateNativeTransfer(account, request)).rejects.toThrow(/insufficient native balance/i);
+    expect(insufficient.mock.calls.some(([args]) => args.method === "eth_sendTransaction")).toBe(false);
   });
 });

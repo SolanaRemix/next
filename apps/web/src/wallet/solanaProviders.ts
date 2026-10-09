@@ -1,9 +1,11 @@
+import { Buffer } from "buffer";
 import {
   Connection,
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
   Transaction,
+  TransactionInstruction,
   VersionedTransaction,
 } from "@solana/web3.js";
 import type { NativeTransferRequest, TransferReceipt, WalletAccount, WalletBalance } from "@next/types";
@@ -217,16 +219,24 @@ async function prepareSolanaNativeTransfer(
   }
   const connection = getConnection();
   const { blockhash } = await connection.getLatestBlockhash("confirmed");
-  const transaction = new Transaction().add(
-    SystemProgram.transfer({ fromPubkey: owner, toPubkey: destination, lamports }),
-  );
+  if (lamports > 0xffff_ffff_ffff_ffffn) {
+    throw new Error("Transfer amount exceeds the Solana system instruction limit.");
+  }
+  const instructionData = new Uint8Array(12);
+  const instructionView = new DataView(instructionData.buffer);
+  instructionView.setUint32(0, 2, true);
+  instructionView.setBigUint64(4, lamports, true);
+  const transaction = new Transaction().add(new TransactionInstruction({
+    programId: SystemProgram.programId,
+    keys: [
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from(instructionData),
+  }));
   transaction.feePayer = owner;
   transaction.recentBlockhash = blockhash;
-  const simulationResult = await connection.simulateTransaction(transaction, {
-    sigVerify: false,
-    replaceRecentBlockhash: true,
-    commitment: "confirmed",
-  });
+  const simulationResult = await connection.simulateTransaction(transaction);
   if (simulationResult.value.err !== null) {
     throw new Error("Solana RPC simulation rejected the transfer. No wallet transaction was requested.");
   }
