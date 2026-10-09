@@ -226,7 +226,7 @@ describe("fetchEvmTokenBalances", () => {
     const request = vi.fn(async ({ method }: { method: string }) =>
       method === "eth_chainId" ? "0x1" : [account.address]);
     window.ethereum = { request };
-    await expect(fetchEvmTokenBalances(account, ["invalid"])).rejects.toThrow(/Invalid ERC-20/);
+    await expect(fetchEvmTokenBalances(account, ["invalid"])).rejects.toThrow(/valid ERC-20 token contracts/i);
     expect(request.mock.calls.some(([args]) => args.method === "eth_call")).toBe(false);
 
     let chainCalls = 0;

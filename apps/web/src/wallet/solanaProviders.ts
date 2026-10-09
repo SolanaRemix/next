@@ -65,12 +65,16 @@ function parseTokenAccount(value: unknown): {
     tokenAmount.decimals < 0 ||
     tokenAmount.decimals > 255
   ) throw new Error("Solana RPC returned an invalid token amount.");
+  const rawAmount = BigInt(tokenAmount.amount);
+  if (rawAmount > 18_446_744_073_709_551_615n) {
+    throw new Error("Solana RPC returned an unsupported token amount.");
+  }
   try {
     new PublicKey(info.mint);
   } catch {
     throw new Error("Solana RPC returned an invalid token mint.");
   }
-  return { mint: info.mint, amount: BigInt(tokenAmount.amount), decimals: tokenAmount.decimals };
+  return { mint: info.mint, amount: rawAmount, decimals: tokenAmount.decimals };
 }
 
 function formatTokenUnits(amount: bigint, decimals: number): string {

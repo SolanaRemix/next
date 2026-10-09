@@ -156,6 +156,9 @@ export async function fetchEvmTokenBalances(
   tokenAddresses: readonly string[],
 ): Promise<WalletBalance[]> {
   if (account.chain !== "evm") throw new Error("Connect an EVM wallet to read ERC-20 balances.");
+  if (tokenAddresses.length > 50 || tokenAddresses.some((address) => !evmAddressPattern.test(address))) {
+    throw new Error("Track at most 50 valid ERC-20 token contracts per account and network.");
+  }
   const provider = getEvmProvider();
   const [chainId, accounts] = await Promise.all([
     provider.request({ method: "eth_chainId" }),
@@ -168,7 +171,6 @@ export async function fetchEvmTokenBalances(
   }
   const uniqueAddresses = [...new Set(tokenAddresses.map((address) => address.toLowerCase()))];
   const balances = await Promise.all(uniqueAddresses.map(async (tokenAddress) => {
-    if (!evmAddressPattern.test(tokenAddress)) throw new Error("Invalid ERC-20 token address.");
     const [symbolResult, decimalsResult, balanceResult] = await Promise.all([
       provider.request({ method: "eth_call", params: [{ to: tokenAddress, data: "0x95d89b41" }, "latest"] }),
       provider.request({ method: "eth_call", params: [{ to: tokenAddress, data: "0x313ce567" }, "latest"] }),

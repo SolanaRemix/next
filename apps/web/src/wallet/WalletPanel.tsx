@@ -117,7 +117,29 @@ export function WalletPanel() {
               <div><p className="eyebrow">SELF-CUSTODY</p><h3>Token balances</h3></div>
               <GlowBadge tone="neutral">{tokenBalances.length} ASSETS</GlowBadge>
             </div>
-            {tokenBalances.length === 0
+            {account.chain === "evm" && trackedTokens.length > 0
+              ? <div className="portfolio-list">
+                {trackedTokens.map((address) => {
+                  const token = tokenBalances.find((balance) => balance.tokenAddress === address);
+                  return (
+                    <div className="portfolio-token" key={address}>
+                      <div>
+                        <strong>{token ? `${token.amount} ${token.asset}` : "Balance unavailable"}</strong>
+                        <span className="muted">{address}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-button session-revoke"
+                        onClick={() => void removeToken(address)}
+                        disabled={busy}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              : tokenBalances.length === 0
               ? <p className="muted">{account.chain === "evm"
                 ? "Add ERC-20 contract addresses to track their balances on this network."
                 : "No non-zero SPL token balances were returned by the connected wallet RPC."}</p>
@@ -128,16 +150,6 @@ export function WalletPanel() {
                       <strong>{token.amount} {token.asset}</strong>
                       <span className="muted">{token.tokenAddress}</span>
                     </div>
-                    {account.chain === "evm" && token.tokenAddress && (
-                      <button
-                        type="button"
-                        className="text-button session-revoke"
-                        onClick={() => void removeToken(token.tokenAddress ?? "")}
-                        disabled={busy}
-                      >
-                        Remove
-                      </button>
-                    )}
                   </div>
                 ))}
               </div>}

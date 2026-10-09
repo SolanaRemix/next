@@ -76,6 +76,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const refreshPortfolio = useCallback(async (tokenAddresses: readonly string[] = []) => {
     if (!account) throw new Error("Connect a wallet before refreshing balances.");
+    setBalance(null);
+    setTokenBalances([]);
     const balances = await run(() => fetchPortfolioBalances(account, tokenAddresses));
     const [native, ...tokens] = balances;
     if (!native) throw new Error("Wallet provider returned an empty portfolio.");

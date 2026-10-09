@@ -92,9 +92,10 @@ describe("fetchSolanaTokenBalances", () => {
       signAndSendTransaction: vi.fn(),
     };
     const request = vi.spyOn(Connection.prototype, "getParsedTokenAccountsByOwner")
-      .mockImplementation(async (_owner, { programId }) => ({
+      .mockImplementation(async (_owner, filter) => ({
         context: { slot: 1 },
-        value: programId.toBase58() === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        value: "programId" in filter &&
+          filter.programId.toBase58() === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
           ? [
             { account: { data: { parsed: { info: {
               mint,
