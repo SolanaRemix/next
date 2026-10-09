@@ -88,5 +88,28 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
       throw new Error('WEB_ORIGIN must be an HTTP(S) origin without a path.');
     }
   }
+  const solanaRpcUrl = config.SOLANA_RPC_URL;
+  if (solanaRpcUrl !== undefined) {
+    if (typeof solanaRpcUrl !== 'string') {
+      throw new Error('SOLANA_RPC_URL must be an HTTPS endpoint.');
+    }
+    try {
+      const endpoint = new URL(solanaRpcUrl);
+      const localHttpEndpoint = config.NODE_ENV !== 'production' &&
+        endpoint.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
+      if (
+        (!localHttpEndpoint && endpoint.protocol !== 'https:') ||
+        !endpoint.hostname ||
+        endpoint.username ||
+        endpoint.password ||
+        endpoint.hash
+      ) {
+        throw new Error('SOLANA_RPC_URL must be an HTTPS endpoint.');
+      }
+    } catch {
+      throw new Error('SOLANA_RPC_URL must be an HTTPS endpoint.');
+    }
+  }
   return config;
 }

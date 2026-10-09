@@ -22,6 +22,8 @@ const maxU64 = 18_446_744_073_709_551_615n;
 const requestTimeoutMs = 15_000;
 const orderLifetimeMs = 60_000;
 const executionRetryWaitMs = 20_000;
+const defaultSolanaRpcUrl = 'https://api.mainnet-beta.solana.com';
+const base58Alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 interface JupiterOrder {
   requestId: string;
@@ -163,6 +165,42 @@ function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+function encodeBase58(bytes: Uint8Array): string {
+  let value = 0n;
+  for (const byte of bytes) value = value * 256n + BigInt(byte);
+  let encoded = '';
+  while (value > 0n) {
+    const remainder = Number(value % 58n);
+    encoded = base58Alphabet[remainder] + encoded;
+    value /= 58n;
+  }
+  let leadingZeroes = 0;
+  while (leadingZeroes < bytes.length && bytes[leadingZeroes] === 0) leadingZeroes += 1;
+  return '1'.repeat(leadingZeroes) + encoded;
+}
+
+function transactionSignature(transaction: Uint8Array): string | null {
+  let count = 0;
+  let offset = 0;
+  let shift = 0;
+  let terminated = false;
+  while (offset < transaction.length && shift <= 14) {
+    const byte = transaction[offset];
+    if (byte === undefined) return null;
+    offset += 1;
+    count |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) {
+      terminated = true;
+      break;
+    }
+    shift += 7;
+  }
+  if (!terminated || count < 1 || count > 19 || transaction.length < offset + 64) return null;
+  const firstSignature = transaction.subarray(offset, offset + 64);
+  if (firstSignature.every((byte) => byte === 0)) return null;
+  return encodeBase58(firstSignature);
+}
+
 @Injectable()
 export class SolanaSwapExecutionService {
   constructor(
@@ -279,10 +317,9 @@ export class SolanaSwapExecutionService {
       throw new ConflictException('Signed transaction is invalid or exceeds the Solana size limit.');
     }
     const canRetryInFlight = row.executionStatus === 'EXECUTING' &&
-      row.expiresAt.getTime() > Date.now() &&
       Date.now() - row.updatedAt.getTime() >= executionRetryWaitMs;
     if (row.executionStatus === 'EXECUTING' && !canRetryInFlight) {
-      return { status: 'processing', signature: null, error: null };
+      return { status: 'processing', signature: row.transactionSignature, error: null };
     }
     let claimCount: number;
     try {
@@ -296,7 +333,11 @@ export class SolanaSwapExecutionService {
             executionKey: request.idempotencyKey,
             updatedAt: row.updatedAt,
           },
-        data: { executionStatus: 'EXECUTING', executionKey: request.idempotencyKey },
+        data: {
+          executionStatus: 'EXECUTING',
+          executionKey: request.idempotencyKey,
+          transactionSignature: transactionSignature(decodedTransaction),
+        },
       });
       claimCount = claim.count;
     } catch (error) {
@@ -315,7 +356,7 @@ export class SolanaSwapExecutionService {
           { status: 'processing', signature: null, error: null };
       }
       if (latest?.executionKey === request.idempotencyKey) {
-        return { status: 'processing', signature: null, error: null };
+        return { status: 'processing', signature: latest.transactionSignature, error: null };
       }
       throw new ConflictException('This swap order has already been submitted.');
     }
@@ -352,6 +393,66 @@ export class SolanaSwapExecutionService {
       },
     });
     return response;
+  }
+
+  async status(userId: string, executionId: string): Promise<SolanaSwapExecuteResponse> {
+    const row = await this.prisma.solanaSwapOrder.findFirst({
+      where: { id: executionId, userId },
+    });
+    if (!row) throw new NotFoundException('Swap order was not found.');
+    const previous = toExecutionResponse(row.executionResult);
+    if (previous && previous.status !== 'processing') return previous;
+    if (row.executionStatus !== 'EXECUTING' || !row.transactionSignature) {
+      return { status: 'processing', signature: row.transactionSignature, error: null };
+    }
+
+    const rpcUrl = this.config.get<string>('SOLANA_RPC_URL') ?? defaultSolanaRpcUrl;
+    let providerStatus: unknown;
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getSignatureStatuses',
+          params: [[row.transactionSignature], { searchTransactionHistory: true }],
+        }),
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+      if (!response.ok) return { status: 'processing', signature: row.transactionSignature, error: null };
+      providerStatus = await response.json().catch(() => null);
+    } catch {
+      return { status: 'processing', signature: row.transactionSignature, error: null };
+    }
+    if (!isRecord(providerStatus) || !isRecord(providerStatus.result) ||
+      !Array.isArray(providerStatus.result.value)) {
+      return { status: 'processing', signature: row.transactionSignature, error: null };
+    }
+    const status = providerStatus.result.value[0];
+    if (!isRecord(status)) {
+      return { status: 'processing', signature: row.transactionSignature, error: null };
+    }
+    const hasError = status.err !== null && status.err !== undefined;
+    const confirmed = status.confirmationStatus === 'confirmed' ||
+      status.confirmationStatus === 'finalized' ||
+      status.confirmations === null;
+    if (!hasError && !confirmed) {
+      return { status: 'processing', signature: row.transactionSignature, error: null };
+    }
+    const result: SolanaSwapExecuteResponse = {
+      status: hasError ? 'failed' : 'success',
+      signature: row.transactionSignature,
+      error: hasError ? JSON.stringify(status.err).slice(0, 300) : null,
+    };
+    await this.prisma.solanaSwapOrder.updateMany({
+      where: { id: row.id, userId, executionStatus: 'EXECUTING' },
+      data: {
+        executionStatus: hasError ? 'FAILED' : 'SUCCEEDED',
+        executionResult: result as unknown as Prisma.InputJsonObject,
+      },
+    });
+    return result;
   }
 
   private replayOrder(

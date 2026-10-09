@@ -1,7 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { SolanaSwapExecuteResponse, SolanaSwapOrderResponse, WalletAccount } from "@next/types";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
-import { executeSolanaSwap, requestSolanaSwapOrder } from "./solanaSwapClient";
+import {
+  executeSolanaSwap,
+  getSolanaSwapStatus,
+  requestSolanaSwapOrder,
+} from "./solanaSwapClient";
 import { signSolanaSwapTransaction } from "../wallet/providers";
 
 const mintPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -58,6 +62,32 @@ export function SolanaSwapPanel({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeExecutionId = result?.status === "processing" ? order?.executionId : null;
+
+  useEffect(() => {
+    if (!activeExecutionId || !accessToken) return;
+    let cancelled = false;
+    let timeout: number;
+    const refreshStatus = async () => {
+      try {
+        const status = await getSolanaSwapStatus(activeExecutionId, accessToken);
+        if (cancelled) return;
+        setResult(status);
+        if (status.status === "processing") {
+          timeout = window.setTimeout(() => void refreshStatus(), 3_000);
+        } else {
+          setPending(null);
+        }
+      } catch {
+        if (!cancelled) timeout = window.setTimeout(() => void refreshStatus(), 3_000);
+      }
+    };
+    timeout = window.setTimeout(() => void refreshStatus(), 3_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [activeExecutionId, accessToken]);
 
   function clearOrder() {
     setOrder(null);

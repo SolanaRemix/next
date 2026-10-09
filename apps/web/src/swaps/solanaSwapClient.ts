@@ -71,6 +71,26 @@ async function postJson<T>(
   return data;
 }
 
+async function getJson<T>(
+  path: string,
+  accessToken: string,
+  validate: (value: unknown) => value is T,
+): Promise<T> {
+  const baseUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
+      headers: { authorization: "Bearer " + accessToken },
+    });
+  } catch {
+    throw new Error("Solana swap service is unavailable.");
+  }
+  const data: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error("Unable to retrieve Solana swap status.");
+  if (!validate(data)) throw new Error("Solana swap service returned an invalid status.");
+  return data;
+}
+
 export function requestSolanaSwapOrder(
   request: SolanaSwapOrderRequest,
   accessToken: string,
@@ -81,6 +101,17 @@ export function requestSolanaSwapOrder(
     request,
     isOrder,
     "Unable to request a Solana swap order.",
+  );
+}
+
+export function getSolanaSwapStatus(
+  executionId: string,
+  accessToken: string,
+): Promise<SolanaSwapExecuteResponse> {
+  return getJson(
+    `/swaps/solana/${encodeURIComponent(executionId)}`,
+    accessToken,
+    isExecution,
   );
 }
 

@@ -10,7 +10,7 @@ const requestId = 'jupiter-order-1';
 const taker = '11111111111111111111111111111111';
 const inputMint = 'So11111111111111111111111111111111111111112';
 const outputMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const encodedTransaction = Buffer.from([1]).toString('base64');
+const encodedTransaction = Buffer.from([1, ...new Array<number>(64).fill(1), 7]).toString('base64');
 
 const request = {
   inputMint,
@@ -169,6 +169,37 @@ describe('SolanaSwapExecutionService', () => {
     }));
     expect(result).toEqual({ status: 'success', signature: '1'.repeat(32), error: null });
     expect(prisma.solanaSwapOrder.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ executionStatus: 'SUCCEEDED' }),
+    }));
+    expect(prisma.solanaSwapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        executionStatus: 'EXECUTING',
+        transactionSignature: expect.stringMatching(/^[1-9A-HJ-NP-Za-km-z]{32,88}$/),
+      }),
+    }));
+  });
+
+  it('reconciles interrupted execution from the Solana RPC signature status', async () => {
+    prisma.solanaSwapOrder.findFirst.mockResolvedValue({
+      id: executionId,
+      userId: 'user-1',
+      executionStatus: 'EXECUTING',
+      executionResult: null,
+      transactionSignature: '1'.repeat(32),
+    });
+    prisma.solanaSwapOrder.updateMany.mockResolvedValue({ count: 1 });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      result: {
+        value: [{ err: null, confirmationStatus: 'confirmed', confirmations: 1 }],
+      },
+    })));
+
+    await expect(service.status('user-1', executionId)).resolves.toEqual({
+      status: 'success',
+      signature: '1'.repeat(32),
+      error: null,
+    });
+    expect(prisma.solanaSwapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ executionStatus: 'SUCCEEDED' }),
     }));
   });

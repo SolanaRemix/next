@@ -67,4 +67,25 @@ describe('validateEnvironment', () => {
       GEO_TRUSTED_PROXY_CIDRS: '192.0.2.0/24,2001:db8::/32',
     })).toMatchObject({ GEO_BLOCKED_COUNTRIES: 'US, GB' });
   });
+
+  it('accepts secure Solana RPC endpoints and only permits local HTTP in development', () => {
+    expect(validateEnvironment({
+      ...validConfig,
+      SOLANA_RPC_URL: 'https://rpc.example.com/?api=example',
+    })).toMatchObject({ SOLANA_RPC_URL: 'https://rpc.example.com/?api=example' });
+    expect(validateEnvironment({
+      ...validConfig,
+      SOLANA_RPC_URL: 'http://localhost:8899',
+    })).toMatchObject({ SOLANA_RPC_URL: 'http://localhost:8899' });
+    expect(() => validateEnvironment({
+      ...validConfig,
+      NODE_ENV: 'production',
+      SOLANA_RPC_URL: 'http://localhost:8899',
+      REDIS_URL: 'rediss://redis.example.com:6380',
+    })).toThrow(/SOLANA_RPC_URL/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SOLANA_RPC_URL: 'not-a-url',
+    })).toThrow(/SOLANA_RPC_URL/);
+  });
 });

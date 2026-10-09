@@ -1,4 +1,13 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+} from '@nestjs/common';
 import type {
   SolanaSwapExecuteResponse,
   SolanaSwapOrderResponse,
@@ -67,5 +76,14 @@ export class SolanaSwapController {
         signature: result.signature,
       }),
     );
+  }
+
+  @Get(':executionId')
+  @Roles('Trader')
+  status(
+    @Param('executionId', new ParseUUIDPipe({ version: '4' })) executionId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<SolanaSwapExecuteResponse> {
+    return this.execution.status(user.id, executionId);
   }
 }

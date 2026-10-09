@@ -79,6 +79,7 @@ model SolanaSwapOrder {
   expiresAt              DateTime @map("expires_at") @db.Timestamptz(6)
   executionKey           String?  @map("execution_key") @db.VarChar(36)
   executionStatus        String   @default("ORDERED") @map("execution_status") @db.VarChar(12)
+  transactionSignature   String?  @map("transaction_signature") @db.VarChar(88)
   executionResult        Json?    @map("execution_result") @db.JsonB
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

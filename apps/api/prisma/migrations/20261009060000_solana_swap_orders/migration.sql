@@ -11,6 +11,7 @@ CREATE TABLE "solana_swap_orders" (
   "expires_at" TIMESTAMPTZ(6) NOT NULL,
   "execution_key" VARCHAR(36),
   "execution_status" VARCHAR(12) NOT NULL DEFAULT 'ORDERED',
+  "transaction_signature" VARCHAR(88),
   "execution_result" JSONB,
   "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMPTZ(6) NOT NULL,
