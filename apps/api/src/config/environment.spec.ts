@@ -88,4 +88,25 @@ describe('validateEnvironment', () => {
       SOLANA_RPC_URL: 'not-a-url',
     })).toThrow(/SOLANA_RPC_URL/);
   });
+
+  it('validates per-chain EVM settlement RPC endpoints', () => {
+    expect(validateEnvironment({
+    ...validConfig,
+    EVM_RPC_URL_1: 'https://ethereum.example.com/rpc?key=secret',
+    EVM_RPC_URL_8453: 'http://localhost:8545',
+    })).toMatchObject({ EVM_RPC_URL_1: 'https://ethereum.example.com/rpc?key=secret' });
+    expect(() => validateEnvironment({
+    ...validConfig,
+    EVM_RPC_URL_999: 'https://rpc.example.com',
+    })).toThrow(/supported EVM chain/);
+    expect(() => validateEnvironment({
+    ...validConfig,
+    NODE_ENV: 'production',
+    EVM_RPC_URL_1: 'http://localhost:8545',
+    })).toThrow(/EVM_RPC_URL_1/);
+    expect(() => validateEnvironment({
+    ...validConfig,
+    EVM_RPC_URL_1: '******rpc.example.com',
+    })).toThrow(/EVM_RPC_URL_1/);
+  });
 });

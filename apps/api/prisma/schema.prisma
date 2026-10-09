@@ -32,6 +32,7 @@ model User {
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
   solanaSwapOrders SolanaSwapOrder[]
+  evmSwapOrders EvmSwapOrder[]
   financialControlChanges FinancialOperationsControl[]
 
   @@index([role])
@@ -93,6 +94,35 @@ model SolanaSwapOrder {
   @@index([userId, createdAt])
   @@index([expiresAt])
   @@map("solana_swap_orders")
+}
+
+model EvmSwapOrder {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  idempotencyKey   String   @map("idempotency_key") @db.VarChar(36)
+  chainId          Int      @map("chain_id")
+  taker            String   @db.VarChar(42)
+  sellToken        String   @map("sell_token") @db.VarChar(42)
+  buyToken         String   @map("buy_token") @db.VarChar(42)
+  sellAmount       String   @map("sell_amount") @db.VarChar(78)
+  buyAmount        String   @map("buy_amount") @db.VarChar(78)
+  minimumBuyAmount String   @map("minimum_buy_amount") @db.VarChar(78)
+  allowanceSpender String   @map("allowance_spender") @db.VarChar(42)
+  transactionTo   String   @map("transaction_to") @db.VarChar(42)
+  transactionData String   @map("transaction_data") @db.Text
+  transactionValue String  @map("transaction_value") @db.VarChar(78)
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz(6)
+  executionStatus  String   @default("ORDERED") @map("execution_status") @db.VarChar(12)
+  transactionHash  String?  @map("transaction_hash") @db.Char(66)
+  executionResult  Json?    @map("execution_result") @db.JsonB
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([executionStatus, expiresAt])
+  @@map("evm_swap_orders")
 }
 
 model FinancialOperationsControl {

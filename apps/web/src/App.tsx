@@ -35,6 +35,7 @@ export function App() {
   const marketToken = user && roleRank[user.role] >= roleRank.Viewer ? accessToken : null;
   const riskToken = user && roleRank[user.role] >= roleRank.Trader ? accessToken : null;
   const solanaSwapToken = user && roleRank[user.role] >= roleRank.Trader ? accessToken : null;
+  const evmSwapExecutionToken = user && roleRank[user.role] >= roleRank.Trader ? accessToken : null;
   const apiUrl = import.meta.env.VITE_API_URL;
   const onboardingStore = useMemo(
     () => apiUrl ? backendOnboardingStore(apiUrl) : localOnboardingStore,
@@ -71,7 +72,12 @@ export function App() {
       </section>
       <section className="perpetual-section" aria-label="Multi-aggregator swap quote">
         <Suspense fallback={<GlassCard className="feature-loading">Loading swap quotes…</GlassCard>}>
-          <SwapPanel accessToken={swapToken} authenticated={user !== null} />
+          <SwapPanel
+            accessToken={swapToken}
+            executionToken={evmSwapExecutionToken}
+            account={account}
+            authenticated={user !== null}
+          />
         </Suspense>
       </section>
       <section className="perpetual-section" aria-label="Solana on-chain swap execution">

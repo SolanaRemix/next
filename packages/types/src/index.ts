@@ -100,6 +100,41 @@ export interface SwapQuoteResponse {
   quotedAt: string;
 }
 
+export interface EvmSwapOrderRequest extends SwapQuoteRequest {
+  taker: string;
+  idempotencyKey: string;
+}
+
+export interface EvmSwapOrderResponse {
+  executionId: string;
+  chainId: number;
+  taker: string;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+  buyAmount: string;
+  minimumBuyAmount: string;
+  allowanceSpender: string;
+  transaction: {
+    to: string;
+    data: string;
+    value: string;
+  };
+  expiresAt: string;
+}
+
+export interface EvmSwapExecuteRequest {
+  executionId: string;
+  transactionHash: string;
+  idempotencyKey: string;
+}
+
+export interface EvmSwapExecuteResponse {
+  status: "processing" | "success" | "failed";
+  transactionHash: string | null;
+  error: string | null;
+}
+
 export interface SolanaSwapOrderRequest {
   inputMint: string;
   outputMint: string;

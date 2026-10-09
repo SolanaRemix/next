@@ -1,4 +1,10 @@
-import type { NativeTransferRequest, TransferReceipt, WalletAccount, WalletBalance } from "@next/types";
+import type {
+  EvmSwapOrderResponse,
+  NativeTransferRequest,
+  TransferReceipt,
+  WalletAccount,
+  WalletBalance,
+} from "@next/types";
 
 interface Eip1193Provider {
   request(args: { method: string; params?: readonly unknown[] }): Promise<unknown>;
@@ -140,6 +146,121 @@ export async function sendNativeTransfer(
 
   const solana = await import("./solanaProviders");
   return solana.sendSolanaNativeTransfer(account, request);
+}
+
+export async function executeEvmSwap(
+  account: WalletAccount,
+  order: EvmSwapOrderResponse,
+  onSwapSubmitted: (transactionHash: string) => void,
+): Promise<string> {
+  if (account.chain !== "evm" || Number.parseInt(account.chainId, 16) !== order.chainId) {
+    throw new Error("Connect the EVM wallet to the swap's selected network.");
+  }
+  if (
+    account.address.toLowerCase() !== order.taker.toLowerCase() ||
+    !evmAddressPattern.test(order.sellToken) ||
+    !evmAddressPattern.test(order.allowanceSpender) ||
+    !evmAddressPattern.test(order.transaction.to) ||
+    !/^0x(?:[a-fA-F0-9]{2})+$/.test(order.transaction.data) ||
+    !/^(?:0|[1-9]\d{0,77})$/.test(order.transaction.value) ||
+    !/^[1-9]\d{0,77}$/.test(order.sellAmount)
+  ) {
+    throw new Error("Swap order contains invalid transaction details.");
+  }
+  const provider = getEvmProvider();
+
+  async function assertCurrentWallet(): Promise<void> {
+    const [chainId, accounts] = await Promise.all([
+      provider.request({ method: "eth_chainId" }),
+      provider.request({ method: "eth_accounts" }),
+    ]);
+    if (chainId !== account.chainId || !Array.isArray(accounts) || !accounts.some(
+      (address) => typeof address === "string" && address.toLowerCase() === account.address.toLowerCase(),
+    )) {
+      throw new Error("The connected EVM account or network changed. Reconnect before trading.");
+    }
+  }
+
+  async function waitForReceipt(transactionHash: string): Promise<void> {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const receipt = await provider.request({
+        method: "eth_getTransactionReceipt",
+        params: [transactionHash],
+      });
+      if (receipt && typeof receipt === "object" && "status" in receipt) {
+        const status = (receipt as { status?: unknown }).status;
+        if (status !== "0x1" && status !== "0x0") {
+          throw new Error("Wallet returned an invalid transaction receipt.");
+        }
+        if (status === "0x0") throw new Error("An EVM swap transaction reverted on-chain.");
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    throw new Error("Timed out waiting for EVM transaction confirmation.");
+  }
+
+  async function sendTransaction(
+    transaction: Record<string, string>,
+    waitForConfirmation = true,
+    onSubmitted?: (transactionHash: string) => void,
+  ): Promise<string> {
+    await assertCurrentWallet();
+    const gas = await provider.request({ method: "eth_estimateGas", params: [transaction] });
+    const gasLimit = parseHexQuantity(gas);
+    const result = await provider.request({
+      method: "eth_sendTransaction",
+      params: [{ ...transaction, gas: `0x${gasLimit.toString(16)}` }],
+    });
+    if (typeof result !== "string" || !/^0x[a-fA-F0-9]{64}$/.test(result)) {
+      throw new Error("Wallet returned an invalid transaction identifier.");
+    }
+    onSubmitted?.(result);
+    if (waitForConfirmation) await waitForReceipt(result);
+    return result;
+  }
+
+  await assertCurrentWallet();
+  const allowanceCallData = "0xdd62ed3e" +
+    account.address.slice(2).toLowerCase().padStart(64, "0") +
+    order.allowanceSpender.slice(2).toLowerCase().padStart(64, "0");
+  const allowanceResult = await provider.request({
+    method: "eth_call",
+    params: [{ to: order.sellToken, data: allowanceCallData }, "latest"],
+  });
+  const allowance = parseHexQuantity(allowanceResult);
+  const sellAmount = BigInt(order.sellAmount);
+  if (allowance < sellAmount) {
+    if (allowance > 0n) {
+      await sendTransaction({
+        from: account.address,
+        to: order.sellToken,
+        value: "0x0",
+        data: "0x095ea7b3" +
+          order.allowanceSpender.slice(2).toLowerCase().padStart(64, "0") +
+          "0".repeat(64),
+      });
+    }
+    await sendTransaction({
+      from: account.address,
+      to: order.sellToken,
+      value: "0x0",
+      data: "0x095ea7b3" +
+        order.allowanceSpender.slice(2).toLowerCase().padStart(64, "0") +
+        sellAmount.toString(16).padStart(64, "0"),
+    });
+  }
+
+  if (Date.parse(order.expiresAt) <= Date.now()) {
+    throw new Error("Swap order expired during token approval. Request a fresh order.");
+  }
+  return sendTransaction({
+    from: account.address,
+    to: order.transaction.to,
+    data: order.transaction.data,
+    value: `0x${BigInt(order.transaction.value).toString(16)}`,
+  }, false, onSwapSubmitted);
 }
 
 export async function signSolanaSwapTransaction(

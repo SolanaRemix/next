@@ -1,6 +1,14 @@
 import { useState, type FormEvent } from "react";
-import type { SwapQuoteRequest, SwapQuoteResponse } from "@next/types";
+import type {
+  EvmSwapExecuteResponse,
+  EvmSwapOrderRequest,
+  SwapQuoteRequest,
+  SwapQuoteResponse,
+  WalletAccount,
+} from "@next/types";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
+import { executeEvmSwap } from "../wallet/providers";
+import { getEvmSwapStatus, requestEvmSwapOrder, submitEvmSwap } from "./evmSwapClient";
 import { requestSwapQuote } from "./swapClient";
 
 const initialValues = {
@@ -41,14 +49,18 @@ function formatTokenAmount(value: string, decimals: number): string {
 
 export interface SwapPanelProps {
   accessToken: string | null;
+  executionToken: string | null;
+  account: WalletAccount | null;
   authenticated: boolean;
 }
 
-export function SwapPanel({ accessToken, authenticated }: SwapPanelProps) {
+export function SwapPanel({ accessToken, executionToken, account, authenticated }: SwapPanelProps) {
   const [values, setValues] = useState(initialValues);
   const [quote, setQuote] = useState<SwapQuoteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [executionBusy, setExecutionBusy] = useState(false);
+  const [executionResult, setExecutionResult] = useState<EvmSwapExecuteResponse | null>(null);
 
   function update(field: keyof typeof initialValues, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
@@ -87,6 +99,87 @@ export function SwapPanel({ accessToken, authenticated }: SwapPanelProps) {
       setError(cause instanceof Error ? cause.message : "Unable to request a swap quote.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function createOrderRequest(): EvmSwapOrderRequest {
+    if (!account || account.chain !== "evm") {
+      throw new Error("Connect an EVM wallet before creating a swap order.");
+    }
+    const chainId = Number(values.chainId);
+    if (Number.parseInt(account.chainId, 16) !== chainId) {
+      throw new Error("Switch your connected EVM wallet to the selected network.");
+    }
+    const sellDecimals = Number(values.sellDecimals);
+    const buyDecimals = Number(values.buyDecimals);
+    const slippagePercent = Number(values.slippagePercent);
+    if (!Number.isFinite(slippagePercent) || slippagePercent <= 0 || slippagePercent > 50) {
+      throw new Error("Maximum slippage must be greater than 0% and no more than 50%.");
+    }
+    if (!Number.isInteger(buyDecimals) || buyDecimals < 0 || buyDecimals > 36) {
+      throw new Error("Buy token decimals must be between 0 and 36.");
+    }
+    return {
+      chainId,
+      sellToken: values.sellToken.trim(),
+      buyToken: values.buyToken.trim(),
+      sellAmount: decimalToBaseUnits(values.sellAmount, sellDecimals),
+      sellDecimals,
+      buyDecimals,
+      maxSlippageBps: Math.round(slippagePercent * 100),
+      taker: account.address,
+      idempotencyKey: crypto.randomUUID(),
+    };
+  }
+
+  async function executeSwap() {
+    setExecutionResult(null);
+    setError(null);
+    setExecutionBusy(true);
+    let sentTransactionHash: string | null = null;
+    try {
+      if (!executionToken) throw new Error("Trader role is required to execute EVM swaps.");
+      if (!account || account.chain !== "evm") throw new Error("Connect an EVM wallet before trading.");
+      const request = createOrderRequest();
+      const order = await requestEvmSwapOrder(request, executionToken);
+      if (Date.parse(order.expiresAt) <= Date.now()) {
+        throw new Error("Swap quote expired before wallet approval. Request a new order.");
+      }
+      sentTransactionHash = await executeEvmSwap(account, order, (transactionHash) => {
+        sentTransactionHash = transactionHash;
+      });
+      let result: EvmSwapExecuteResponse | null = null;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          result = await submitEvmSwap(
+            order.executionId,
+            sentTransactionHash,
+            request.idempotencyKey,
+            executionToken,
+          );
+          break;
+        } catch (cause) {
+          if (!(cause instanceof Error) ||
+              !cause.message.includes("not visible on the configured EVM RPC yet") ||
+              attempt === 4) throw cause;
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        }
+      }
+      for (let attempt = 0; result?.status === "processing" && attempt < 40; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
+        result = await getEvmSwapStatus(order.executionId, executionToken);
+      }
+      setExecutionResult(result);
+      if (result?.status === "processing") {
+        setError("Swap is still pending on-chain. Check settlement status shortly.");
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Unable to execute the EVM swap.";
+      setError(sentTransactionHash
+        ? `Transaction ${sentTransactionHash} was submitted, but settlement verification failed: ${message}`
+        : message);
+    } finally {
+      setExecutionBusy(false);
     }
   }
 
@@ -142,7 +235,27 @@ export function SwapPanel({ accessToken, authenticated }: SwapPanelProps) {
           )}
         </div>
       )}
-      <p className="wallet-disclaimer">Quotes are fetched server-side from 0x, 1inch, and ParaSwap. No swap transaction is built, signed, or broadcast. Verify token decimals and contract addresses before any future transaction.</p>
+      <div className="swap-execution">
+        <FlashButton
+          type="button"
+          onClick={() => void executeSwap()}
+          disabled={executionBusy || !executionToken || account?.chain !== "evm"}
+        >
+          {executionBusy
+            ? "Waiting for wallet and settlement…"
+            : executionToken
+              ? "Execute via 0x"
+              : "Trader role required to execute"}
+        </FlashButton>
+        {executionResult && (
+          <p className={executionResult.status === "success" ? "message message--success" : "muted"} role="status">
+            EVM settlement: {executionResult.status}
+            {executionResult.transactionHash ? ` · ${executionResult.transactionHash}` : ""}
+            {executionResult.error ? ` · ${executionResult.error}` : ""}
+          </p>
+        )}
+      </div>
+      <p className="wallet-disclaimer">Quotes compare 0x, 1inch, and ParaSwap. Settlement uses a fresh 0x quote, wallet-confirmed exact-input approval and swap transactions, and server-side RPC receipt verification. The app never holds keys. Confirm token addresses, amounts, spender, network, and wallet prompts before signing.</p>
     </GlassCard>
   );
 }
