@@ -73,6 +73,27 @@ describe('RedisThrottlerStorage', () => {
       });
   });
 
+  it('checks Redis readiness without mutating throttle counters', async () => {
+    const { storage, client } = createStorage(1);
+    await storage.onModuleInit();
+
+    await expect(storage.checkHealth()).resolves.toBeUndefined();
+    expect(client.eval).toHaveBeenCalledWith('return 1', {
+      keys: ['test:throttle:health'],
+      arguments: [],
+    });
+  });
+
+  it('fails readiness when configured Redis is disconnected or unavailable', async () => {
+    const disconnected = createStorage();
+    await expect(disconnected.storage.checkHealth()).rejects.toMatchObject({ status: 503 });
+
+    const unavailable = createStorage();
+    await unavailable.storage.onModuleInit();
+    unavailable.client.eval.mockRejectedValue(new Error('connection lost'));
+    await expect(unavailable.storage.checkHealth()).rejects.toMatchObject({ status: 503 });
+  });
+
   it('fails closed if Redis returns malformed data or a command fails', async () => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const malformed = createStorage(['bad']);

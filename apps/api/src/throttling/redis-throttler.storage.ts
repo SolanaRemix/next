@@ -77,6 +77,20 @@ export class RedisThrottlerStorage
     this.fallback.onApplicationShutdown();
   }
 
+  async checkHealth(): Promise<void> {
+    if (!this.client) return;
+    try {
+      if (!this.client.isOpen) throw new Error('Redis connection is not open.');
+      const result = await this.client.eval('return 1', {
+        keys: [`${this.namespace}:health`],
+        arguments: [],
+      });
+      if (Number(result) !== 1) throw new Error('Redis returned an invalid health response.');
+    } catch {
+      throw new ServiceUnavailableException('Shared request throttling is unavailable.');
+    }
+  }
+
   async increment(
     key: string,
     ttl: number,

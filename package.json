@@ -11,8 +11,8 @@
     "dev": "npm run dev --workspace @next/web",
     "dev:api": "npm run start:dev --workspace @next/api",
     "build": "npm run typecheck && npm run build --workspace @next/web && npm run build --workspace @next/api",
-    "test": "npm run test --workspace @next/web && npm run test --workspace @next/api",
-    "typecheck": "tsc --build"
+    "test": "npm run db:generate --workspace @next/api && npm run test --workspace @next/web && npm run test --workspace @next/api",
+    "typecheck": "npm run db:generate --workspace @next/api && tsc --build"
   },
   "devDependencies": {
     "@types/react": "18.3.18",

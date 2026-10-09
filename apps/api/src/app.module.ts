@@ -14,6 +14,7 @@ import { validateEnvironment } from './config/environment.js';
 import { GeographicAccessGuard } from './geo/geographic-access.guard.js';
 import { SolanaMarketModule } from './solana-market/solana-market.module.js';
 import { FinancialControlsModule } from './financial-controls/financial-controls.module.js';
+import { HealthModule } from './health/health.module.js';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { FinancialControlsModule } from './financial-controls/financial-controls
     PerpetualsModule,
     SolanaMarketModule,
     FinancialControlsModule,
+    HealthModule,
     SwapsModule,
   ],
   providers: [
