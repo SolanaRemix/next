@@ -4,6 +4,7 @@ import {
   OnApplicationShutdown,
   OnModuleDestroy,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ThrottlerStorageService } from '@nestjs/throttler';
 import { createHash } from 'node:crypto';
@@ -91,17 +92,27 @@ export class RedisThrottlerStorage
       .update(`${throttlerName}:${key}`, 'utf8')
       .digest('hex');
     const hashTag = `{${identity}}`;
-    const result: unknown = await this.client.eval(INCREMENT_SCRIPT, {
-      keys: [
-        `${this.namespace}:${hashTag}:hits`,
-        `${this.namespace}:${hashTag}:blocked`,
-      ],
-      arguments: [String(ttl), String(limit), String(blockDuration)],
-    });
+    let result: unknown;
+    try {
+      result = await this.client.eval(INCREMENT_SCRIPT, {
+        keys: [
+          `${this.namespace}:${hashTag}:hits`,
+          `${this.namespace}:${hashTag}:blocked`,
+        ],
+        arguments: [String(ttl), String(limit), String(blockDuration)],
+      });
+    } catch {
+      this.logger.error('Redis throttling command failed.');
+      throw new ServiceUnavailableException(
+        'Shared request throttling is temporarily unavailable.',
+      );
+    }
 
     if (!Array.isArray(result) || result.length !== 4) {
       this.logger.error('Redis returned an invalid throttling response.');
-      throw new Error('Shared request throttling is unavailable.');
+      throw new ServiceUnavailableException(
+        'Shared request throttling is temporarily unavailable.',
+      );
     }
 
     const values = result.map(Number);
@@ -122,7 +133,9 @@ export class RedisThrottlerStorage
       timeToBlockExpire < 0
     ) {
       this.logger.error('Redis returned invalid throttling values.');
-      throw new Error('Shared request throttling is unavailable.');
+      throw new ServiceUnavailableException(
+        'Shared request throttling is temporarily unavailable.',
+      );
     }
 
     return {

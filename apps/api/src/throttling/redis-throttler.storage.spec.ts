@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   RedisThrottlerStorage,
   type RedisThrottleClient,
@@ -73,14 +74,15 @@ describe('RedisThrottlerStorage', () => {
   });
 
   it('fails closed if Redis returns malformed data or a command fails', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const malformed = createStorage(['bad']);
     await expect(malformed.storage.increment('key', 60_000, 10, 0, 'default'))
-      .rejects.toThrow(/throttling is unavailable/i);
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
 
     const unavailable = createStorage();
     unavailable.client.eval.mockRejectedValue(new Error('connection lost'));
     await expect(unavailable.storage.increment('key', 60_000, 10, 0, 'default'))
-      .rejects.toThrow('connection lost');
+      .rejects.toMatchObject({ status: 503 });
   });
 
   it('closes the Redis connection during shutdown', async () => {

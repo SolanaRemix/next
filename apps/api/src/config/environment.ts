@@ -30,12 +30,13 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
         !['redis:', 'rediss:'].includes(redis.protocol) ||
         !redis.hostname ||
         redis.search ||
-        redis.hash
+        redis.hash ||
+        (config.NODE_ENV === 'production' && !['', '/', '/0'].includes(redis.pathname))
       ) {
-        throw new Error('REDIS_URL must use redis:// or rediss://.');
+        throw new Error('REDIS_URL must be a valid Redis endpoint and use database 0 in production.');
       }
     } catch {
-      throw new Error('REDIS_URL must use redis:// or rediss:// and include a hostname.');
+      throw new Error('REDIS_URL must be a valid Redis endpoint and use database 0 in production.');
     }
   }
   const webOrigin = config.WEB_ORIGIN;

@@ -34,6 +34,11 @@ describe('validateEnvironment', () => {
       NODE_ENV: 'production',
       REDIS_URL: 'https://redis.example.com',
     })).toThrow(/REDIS_URL/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      NODE_ENV: 'production',
+      REDIS_URL: 'redis://redis.example.com/1',
+    })).toThrow(/REDIS_URL/);
     expect(validateEnvironment({
       ...validConfig,
       NODE_ENV: 'production',
