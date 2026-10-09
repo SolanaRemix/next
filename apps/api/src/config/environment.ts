@@ -113,7 +113,7 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
   }
   const supportedEvmChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
   for (const [key, value] of Object.entries(config)) {
-    if (!key.startsWith('EVM_RPC_URL_') || value === undefined) continue;
+    if (!key.startsWith('EVM_RPC_URL_') || value === undefined || value === '') continue;
     const chainId = key.slice('EVM_RPC_URL_'.length);
     if (!supportedEvmChainIds.has(chainId) || typeof value !== 'string') {
       throw new Error(`${key} must configure a supported EVM chain endpoint.`);

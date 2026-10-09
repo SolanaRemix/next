@@ -62,10 +62,14 @@ describe("parseTokenAmount", () => {
       `0x${"b".repeat(64)}`,
     ];
     let sendIndex = 0;
+    let allowanceCallIndex = 0;
     const request = vi.fn(async ({ method }: { method: string; params?: readonly unknown[] }) => {
       if (method === "eth_chainId") return "0x1";
       if (method === "eth_accounts") return [account.address];
-      if (method === "eth_call") return `0x${"0".repeat(64)}`;
+      if (method === "eth_call") {
+        allowanceCallIndex += 1;
+        return allowanceCallIndex === 1 ? `0x${"0".repeat(64)}` : "0x64";
+      }
       if (method === "eth_estimateGas") return "0x5208";
       if (method === "eth_sendTransaction") return txHashes[sendIndex++];
       if (method === "eth_getTransactionReceipt") return { status: "0x1" };

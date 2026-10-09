@@ -222,14 +222,18 @@ export async function executeEvmSwap(
   }
 
   await assertCurrentWallet();
-  const allowanceCallData = "0xdd62ed3e" +
-    account.address.slice(2).toLowerCase().padStart(64, "0") +
-    order.allowanceSpender.slice(2).toLowerCase().padStart(64, "0");
-  const allowanceResult = await provider.request({
-    method: "eth_call",
-    params: [{ to: order.sellToken, data: allowanceCallData }, "latest"],
-  });
-  const allowance = parseHexQuantity(allowanceResult);
+  async function readAllowance(): Promise<bigint> {
+    const allowanceCallData = "0xdd62ed3e" +
+      account.address.slice(2).toLowerCase().padStart(64, "0") +
+      order.allowanceSpender.slice(2).toLowerCase().padStart(64, "0");
+    const result = await provider.request({
+      method: "eth_call",
+      params: [{ to: order.sellToken, data: allowanceCallData }, "latest"],
+    });
+    return parseHexQuantity(result);
+  }
+
+  const allowance = await readAllowance();
   const sellAmount = BigInt(order.sellAmount);
   if (allowance < sellAmount) {
     if (allowance > 0n) {
@@ -250,6 +254,9 @@ export async function executeEvmSwap(
         order.allowanceSpender.slice(2).toLowerCase().padStart(64, "0") +
         sellAmount.toString(16).padStart(64, "0"),
     });
+    if (await readAllowance() < sellAmount) {
+      throw new Error("Token approval did not grant the required exact-input allowance.");
+    }
   }
 
   if (Date.parse(order.expiresAt) <= Date.now()) {

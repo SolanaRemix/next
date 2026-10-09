@@ -60,7 +60,7 @@ function parseTransaction(value: unknown): EvmTransaction {
   };
 }
 
-function parseOrderPayload(value: Prisma.JsonValue, row: {
+function parseOrderPayload(row: {
   id: string;
   chainId: number;
   taker: string;
@@ -75,9 +75,6 @@ function parseOrderPayload(value: Prisma.JsonValue, row: {
   transactionValue: string;
   expiresAt: Date;
 }): EvmSwapOrderResponse | null {
-  if (!isRecord(value)) return null;
-  const expiresAt = value.expiresAt;
-  if (typeof expiresAt !== 'string') return null;
   return {
     executionId: row.id,
     chainId: row.chainId,
@@ -93,7 +90,7 @@ function parseOrderPayload(value: Prisma.JsonValue, row: {
       data: row.transactionData,
       value: row.transactionValue,
     },
-    expiresAt,
+    expiresAt: row.expiresAt.toISOString(),
   };
 }
 
@@ -128,6 +125,7 @@ export class EvmSwapExecutionService {
     if (request.sellToken.toLowerCase() === request.buyToken.toLowerCase()) {
       throw new BadRequestException('Sell and buy tokens must be different.');
     }
+    await this.controls.assertExecutionEnabled();
     const existing = await this.prisma.evmSwapOrder.findUnique({
       where: { userId_idempotencyKey: { userId, idempotencyKey: request.idempotencyKey } },
     });
@@ -135,7 +133,6 @@ export class EvmSwapExecutionService {
 
     const apiKey = this.config.get<string>('ZEROX_API_KEY');
     if (!apiKey) throw new ServiceUnavailableException('EVM swap execution is not configured.');
-    await this.controls.assertExecutionEnabled();
 
     const url = new URL('https://api.0x.org/swap/allowance-holder/quote');
     url.search = new URLSearchParams({
@@ -150,30 +147,45 @@ export class EvmSwapExecutionService {
       headers: { '0x-version': 'v2', '0x-api-key': apiKey },
     });
     const quote = this.parseQuote(rawQuote, request);
-    const minimumBuyAmount = (
+    const minimumBuyAmount = quote.minimumBuyAmount ?? (
       BigInt(quote.buyAmount) * BigInt(10_000 - request.maxSlippageBps) / 10_000n
     ).toString();
     const expiresAt = new Date(Date.now() + orderLifetimeMs);
 
     try {
-      const row = await this.prisma.evmSwapOrder.create({
-        data: {
-          userId,
-          idempotencyKey: request.idempotencyKey,
-          chainId: request.chainId,
-          taker: request.taker,
-          sellToken: request.sellToken,
-          buyToken: request.buyToken,
-          sellAmount: request.sellAmount,
-          buyAmount: quote.buyAmount,
-          minimumBuyAmount,
-          allowanceSpender: quote.allowanceSpender,
-          transactionTo: quote.transaction.to,
-          transactionData: quote.transaction.data,
-          transactionValue: quote.transaction.value,
-          expiresAt,
-          orderPayload: { expiresAt: expiresAt.toISOString() },
-        },
+      const row = await this.prisma.$transaction(async (transaction) => {
+        const control = await transaction.$queryRaw<{ enabled: boolean }[]>`
+          SELECT "enabled"
+          FROM "financial_operations_controls"
+          WHERE "id" = 'global_execution'
+          FOR SHARE
+        `;
+        if (control[0]?.enabled !== true) {
+          throw new ServiceUnavailableException(
+            'Financial execution is disabled by the global control.',
+          );
+        }
+        return transaction.evmSwapOrder.create({
+          data: {
+            userId,
+            idempotencyKey: request.idempotencyKey,
+            chainId: request.chainId,
+            taker: request.taker,
+            sellToken: request.sellToken,
+            buyToken: request.buyToken,
+            sellAmount: request.sellAmount,
+            sellDecimals: request.sellDecimals,
+            buyDecimals: request.buyDecimals,
+            maxSlippageBps: request.maxSlippageBps,
+            buyAmount: quote.buyAmount,
+            minimumBuyAmount,
+            allowanceSpender: quote.allowanceSpender,
+            transactionTo: quote.transaction.to,
+            transactionData: quote.transaction.data,
+            transactionValue: quote.transaction.value,
+            expiresAt,
+          },
+        });
       });
       return {
         executionId: row.id,
@@ -226,7 +238,10 @@ export class EvmSwapExecutionService {
       throw new ServiceUnavailableException(`EVM_RPC_URL_${row.chainId} is required to verify settlement.`);
     }
     const chainId = await this.rpc(rpcUrl, 'eth_chainId', []);
-    if (typeof chainId !== 'string' || BigInt(chainId) !== BigInt(row.chainId)) {
+    if (
+      typeof chainId !== 'string' || !/^0x[0-9a-f]+$/i.test(chainId) ||
+      BigInt(chainId) !== BigInt(row.chainId)
+    ) {
       throw new ServiceUnavailableException('Configured EVM RPC endpoint returned the wrong chain.');
     }
     const transaction = await this.rpc(rpcUrl, 'eth_getTransactionByHash', [request.transactionHash]);
@@ -274,28 +289,50 @@ export class EvmSwapExecutionService {
 
   private parseQuote(value: unknown, request: EvmSwapOrderRequest): {
     buyAmount: string;
+    minimumBuyAmount?: string;
     allowanceSpender: string;
     transaction: EvmTransaction;
   } {
-    if (!isRecord(value) || !isRecord(value.issues) || !isRecord(value.issues.allowance)) {
-      throw new BadGatewayException('0x response did not include a valid allowance and transaction.');
+    if (!isRecord(value) || !isRecord(value.issues)) {
+      throw new BadGatewayException('0x response did not include a valid quote and transaction.');
     }
     const buyAmount = parseUnsignedInteger(value.buyAmount, 'buy amount');
-    const spender = value.issues.allowance.spender;
+    const allowanceIssue = isRecord(value.issues.allowance) ? value.issues.allowance : null;
+    const spender = allowanceIssue?.spender ?? value.allowanceTarget;
     const transaction = parseTransaction(value.transaction);
+    const transactionRecord = isRecord(value.transaction) ? value.transaction : null;
+    const minimumBuyAmount = value.minBuyAmount === undefined
+      ? undefined
+      : parseUnsignedInteger(value.minBuyAmount, 'minimum buy amount');
     if (
       buyAmount === '0' ||
+      (minimumBuyAmount !== undefined &&
+        (minimumBuyAmount === '0' || BigInt(minimumBuyAmount) > BigInt(buyAmount))) ||
       typeof spender !== 'string' || !addressPattern.test(spender) ||
+      spender.toLowerCase() === transaction.to.toLowerCase() ||
       typeof value.sellAmount !== 'string' || value.sellAmount !== request.sellAmount ||
       typeof value.buyToken !== 'string' ||
       value.buyToken.toLowerCase() !== request.buyToken.toLowerCase() ||
       typeof value.sellToken !== 'string' ||
       value.sellToken.toLowerCase() !== request.sellToken.toLowerCase() ||
-      (typeof value.taker === 'string' && value.taker.toLowerCase() !== request.taker.toLowerCase())
+      (allowanceIssue && 'holder' in allowanceIssue &&
+        (typeof allowanceIssue.holder !== 'string' ||
+          allowanceIssue.holder.toLowerCase() !== request.taker.toLowerCase())) ||
+      (transactionRecord && 'from' in transactionRecord &&
+        (typeof transactionRecord.from !== 'string' ||
+          transactionRecord.from.toLowerCase() !== request.taker.toLowerCase())) ||
+      ('taker' in value &&
+        (typeof value.taker !== 'string' ||
+          value.taker.toLowerCase() !== request.taker.toLowerCase()))
     ) {
       throw new BadGatewayException('0x returned a quote that does not match the requested swap.');
     }
-    return { buyAmount, allowanceSpender: spender, transaction };
+    return {
+      buyAmount,
+      ...(minimumBuyAmount !== undefined ? { minimumBuyAmount } : {}),
+      allowanceSpender: spender,
+      transaction,
+    };
   }
 
   private replayOrder(
@@ -307,14 +344,17 @@ export class EvmSwapExecutionService {
       row.taker.toLowerCase() !== request.taker.toLowerCase() ||
       row.sellToken.toLowerCase() !== request.sellToken.toLowerCase() ||
       row.buyToken.toLowerCase() !== request.buyToken.toLowerCase() ||
-      row.sellAmount !== request.sellAmount
+      row.sellAmount !== request.sellAmount ||
+      row.sellDecimals !== request.sellDecimals ||
+      row.buyDecimals !== request.buyDecimals ||
+      row.maxSlippageBps !== request.maxSlippageBps
     ) {
       throw new ConflictException('Idempotency key was already used for a different EVM swap.');
     }
     if (row.expiresAt.getTime() <= Date.now()) {
       throw new ConflictException('EVM swap order expired. Request a fresh order.');
     }
-    const response = parseOrderPayload(row.orderPayload, row);
+    const response = parseOrderPayload(row);
     if (!response) throw new ServiceUnavailableException('Stored EVM swap order is invalid.');
     return response;
   }
@@ -322,6 +362,12 @@ export class EvmSwapExecutionService {
   private async reconcile(rpcUrl: string, row: {
     id: string;
     userId: string;
+    chainId: number;
+    taker: string;
+    sellToken: string;
+    buyToken: string;
+    sellAmount: string;
+    minimumBuyAmount: string;
     executionStatus: string;
     transactionHash: string | null;
   }): Promise<EvmSwapExecuteResponse> {
@@ -333,7 +379,8 @@ export class EvmSwapExecutionService {
       return { status: 'processing', transactionHash: row.transactionHash, error: null };
     }
     if (!isRecord(receipt) || typeof receipt.status !== 'string' ||
-      receipt.transactionHash !== row.transactionHash) {
+      typeof receipt.transactionHash !== 'string' ||
+      receipt.transactionHash.toLowerCase() !== row.transactionHash.toLowerCase()) {
       throw new ServiceUnavailableException('EVM RPC returned an invalid transaction receipt.');
     }
     if (receipt.status !== '0x1' && receipt.status !== '0x0') {
@@ -355,12 +402,38 @@ export class EvmSwapExecutionService {
       transactionHash: row.transactionHash,
       error: receipt.status === '0x0' ? 'The swap transaction reverted on-chain.' : null,
     };
-    await this.prisma.evmSwapOrder.updateMany({
-      where: { id: row.id, userId: row.userId, transactionHash: row.transactionHash, executionStatus: 'SUBMITTED' },
-      data: {
-        executionStatus: response.status === 'success' ? 'SUCCEEDED' : 'FAILED',
-        executionResult: response as unknown as Prisma.InputJsonObject,
-      },
+    await this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.evmSwapOrder.updateMany({
+        where: {
+          id: row.id,
+          userId: row.userId,
+          transactionHash: row.transactionHash,
+          executionStatus: 'SUBMITTED',
+        },
+        data: {
+          executionStatus: response.status === 'success' ? 'SUCCEEDED' : 'FAILED',
+          executionResult: response as unknown as Prisma.InputJsonObject,
+        },
+      });
+      if (updated.count === 1) {
+        await transaction.auditLog.create({
+          data: {
+            actorId: row.userId,
+            action: 'swap.evm.settlement.confirmed',
+            metadata: {
+              executionId: row.id,
+              chainId: row.chainId,
+              taker: row.taker,
+              sellToken: row.sellToken,
+              buyToken: row.buyToken,
+              sellAmount: row.sellAmount,
+              minimumBuyAmount: row.minimumBuyAmount,
+              transactionHash: row.transactionHash,
+              outcome: response.status,
+            } satisfies Prisma.InputJsonObject,
+          },
+        });
+      }
     });
     return response;
   }

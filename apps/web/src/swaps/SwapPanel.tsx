@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type {
   EvmSwapExecuteResponse,
   EvmSwapOrderRequest,
+  EvmSwapOrderResponse,
   SwapQuoteRequest,
   SwapQuoteResponse,
   WalletAccount,
@@ -60,11 +61,16 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [executionBusy, setExecutionBusy] = useState(false);
+  const [evmOrder, setEvmOrder] = useState<EvmSwapOrderResponse | null>(null);
+  const [orderIdempotencyKey, setOrderIdempotencyKey] = useState<string | null>(null);
   const [executionResult, setExecutionResult] = useState<EvmSwapExecuteResponse | null>(null);
+  const [settlementExecutionId, setSettlementExecutionId] = useState<string | null>(null);
 
   function update(field: keyof typeof initialValues, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
     setQuote(null);
+    setEvmOrder(null);
+    setOrderIdempotencyKey(null);
     setError(null);
   }
 
@@ -132,29 +138,55 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
     };
   }
 
-  async function executeSwap() {
+  async function prepareSwapOrder() {
     setExecutionResult(null);
+    setSettlementExecutionId(null);
     setError(null);
     setExecutionBusy(true);
-    let sentTransactionHash: string | null = null;
     try {
       if (!executionToken) throw new Error("Trader role is required to execute EVM swaps.");
       if (!account || account.chain !== "evm") throw new Error("Connect an EVM wallet before trading.");
       const request = createOrderRequest();
       const order = await requestEvmSwapOrder(request, executionToken);
       if (Date.parse(order.expiresAt) <= Date.now()) {
-        throw new Error("Swap quote expired before wallet approval. Request a new order.");
+        throw new Error("Swap quote expired before it could be reviewed. Request a new order.");
       }
-      sentTransactionHash = await executeEvmSwap(account, order, (transactionHash) => {
+      setEvmOrder(order);
+      setOrderIdempotencyKey(request.idempotencyKey);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to request an executable 0x quote.");
+    } finally {
+      setExecutionBusy(false);
+    }
+  }
+
+  async function executeSwap() {
+    setError(null);
+    setExecutionResult(null);
+    setExecutionBusy(true);
+    let sentTransactionHash: string | null = null;
+    try {
+      if (!executionToken) throw new Error("Trader role is required to execute EVM swaps.");
+      if (!account || account.chain !== "evm" || !evmOrder || !orderIdempotencyKey) {
+        throw new Error("Create and review an executable quote before signing.");
+      }
+      if (Date.parse(evmOrder.expiresAt) <= Date.now()) {
+        setEvmOrder(null);
+        setOrderIdempotencyKey(null);
+        throw new Error("Swap order expired. Request a fresh executable quote.");
+      }
+      sentTransactionHash = await executeEvmSwap(account, evmOrder, (transactionHash) => {
         sentTransactionHash = transactionHash;
+        setSettlementExecutionId(evmOrder.executionId);
+        setExecutionResult({ status: "processing", transactionHash, error: null });
       });
       let result: EvmSwapExecuteResponse | null = null;
       for (let attempt = 0; attempt < 5; attempt += 1) {
         try {
           result = await submitEvmSwap(
-            order.executionId,
+            evmOrder.executionId,
             sentTransactionHash,
-            request.idempotencyKey,
+            orderIdempotencyKey,
             executionToken,
           );
           break;
@@ -167,17 +199,37 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
       }
       for (let attempt = 0; result?.status === "processing" && attempt < 40; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3_000));
-        result = await getEvmSwapStatus(order.executionId, executionToken);
+        result = await getEvmSwapStatus(evmOrder.executionId, executionToken);
       }
       setExecutionResult(result);
+      setSettlementExecutionId(evmOrder.executionId);
+      setEvmOrder(null);
+      setOrderIdempotencyKey(null);
       if (result?.status === "processing") {
         setError("Swap is still pending on-chain. Check settlement status shortly.");
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Unable to execute the EVM swap.";
-      setError(sentTransactionHash
-        ? `Transaction ${sentTransactionHash} was submitted, but settlement verification failed: ${message}`
-        : message);
+      if (sentTransactionHash) {
+        setEvmOrder(null);
+        setOrderIdempotencyKey(null);
+        setError(`Transaction ${sentTransactionHash} was submitted, but settlement verification failed: ${message}`);
+      } else {
+        setError(message);
+      }
+    } finally {
+      setExecutionBusy(false);
+    }
+  }
+
+  async function refreshSettlement() {
+    if (!settlementExecutionId || !executionToken) return;
+    setExecutionBusy(true);
+    setError(null);
+    try {
+      setExecutionResult(await getEvmSwapStatus(settlementExecutionId, executionToken));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to refresh settlement status.");
     } finally {
       setExecutionBusy(false);
     }
@@ -197,7 +249,7 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
       </div>
       <form className="swap-form" onSubmit={(event) => void getQuote(event)}>
         <label>Network
-          <select value={values.chainId} onChange={(event) => update("chainId", event.target.value)}>
+          <select disabled={busy || executionBusy} value={values.chainId} onChange={(event) => update("chainId", event.target.value)}>
             <option value="1">Ethereum</option>
             <option value="10">Optimism</option>
             <option value="56">BNB Chain</option>
@@ -207,15 +259,15 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
             <option value="43114">Avalanche</option>
           </select>
         </label>
-        <label>Sell token contract<input required spellCheck={false} autoComplete="off" placeholder="0x…" value={values.sellToken} onChange={(event) => update("sellToken", event.target.value)} /></label>
-        <label>Buy token contract<input required spellCheck={false} autoComplete="off" placeholder="0x…" value={values.buyToken} onChange={(event) => update("buyToken", event.target.value)} /></label>
+        <label>Sell token contract<input disabled={busy || executionBusy} required spellCheck={false} autoComplete="off" placeholder="0x…" value={values.sellToken} onChange={(event) => update("sellToken", event.target.value)} /></label>
+        <label>Buy token contract<input disabled={busy || executionBusy} required spellCheck={false} autoComplete="off" placeholder="0x…" value={values.buyToken} onChange={(event) => update("buyToken", event.target.value)} /></label>
         <div className="swap-form__row">
-          <label>Sell amount<input required min="0" step="any" type="number" value={values.sellAmount} onChange={(event) => update("sellAmount", event.target.value)} /></label>
-          <label>Sell decimals<input required min="0" max="36" step="1" type="number" value={values.sellDecimals} onChange={(event) => update("sellDecimals", event.target.value)} /></label>
+          <label>Sell amount<input disabled={busy || executionBusy} required min="0" step="any" type="number" value={values.sellAmount} onChange={(event) => update("sellAmount", event.target.value)} /></label>
+          <label>Sell decimals<input disabled={busy || executionBusy} required min="0" max="36" step="1" type="number" value={values.sellDecimals} onChange={(event) => update("sellDecimals", event.target.value)} /></label>
         </div>
         <div className="swap-form__row">
-          <label>Buy decimals<input required min="0" max="36" step="1" type="number" value={values.buyDecimals} onChange={(event) => update("buyDecimals", event.target.value)} /></label>
-          <label>Max slippage (%)<input required min="0.01" max="50" step="0.01" type="number" value={values.slippagePercent} onChange={(event) => update("slippagePercent", event.target.value)} /></label>
+          <label>Buy decimals<input disabled={busy || executionBusy} required min="0" max="36" step="1" type="number" value={values.buyDecimals} onChange={(event) => update("buyDecimals", event.target.value)} /></label>
+          <label>Max slippage (%)<input disabled={busy || executionBusy} required min="0.01" max="50" step="0.01" type="number" value={values.slippagePercent} onChange={(event) => update("slippagePercent", event.target.value)} /></label>
         </div>
         <FlashButton type="submit" disabled={busy || !accessToken}>{busy ? "Fetching routes…" : accessToken ? "Compare aggregator quotes" : authenticated ? "Viewer role required" : "Sign in to compare quotes"}</FlashButton>
       </form>
@@ -236,23 +288,51 @@ export function SwapPanel({ accessToken, executionToken, account, authenticated 
         </div>
       )}
       <div className="swap-execution">
-        <FlashButton
-          type="button"
-          onClick={() => void executeSwap()}
-          disabled={executionBusy || !executionToken || account?.chain !== "evm"}
-        >
-          {executionBusy
-            ? "Waiting for wallet and settlement…"
-            : executionToken
-              ? "Execute via 0x"
-              : "Trader role required to execute"}
-        </FlashButton>
+        {!evmOrder ? (
+          <FlashButton
+            type="button"
+            onClick={() => void prepareSwapOrder()}
+            disabled={executionBusy || !executionToken || account?.chain !== "evm"}
+          >
+            {executionBusy
+              ? "Requesting executable quote…"
+              : executionToken
+                ? "Get executable 0x quote"
+                : "Trader role required to execute"}
+          </FlashButton>
+        ) : (
+          <div className="swap-result swap-result--review">
+            <h3>Review before wallet approval</h3>
+            <p>Sell <strong>{formatTokenAmount(evmOrder.sellAmount, Number(values.sellDecimals))}</strong> for at least <strong>{formatTokenAmount(evmOrder.minimumBuyAmount, Number(values.buyDecimals))}</strong>.</p>
+            <p className="muted">Sell token: <code>{evmOrder.sellToken}</code></p>
+            <p className="muted">Buy token: <code>{evmOrder.buyToken}</code></p>
+            <p className="muted">Chain {evmOrder.chainId} · Max slippage {values.slippagePercent}%</p>
+            <p className="muted">Allowance spender: <code>{evmOrder.allowanceSpender}</code></p>
+            <p className="muted">Swap contract: <code>{evmOrder.transaction.to}</code></p>
+            <FlashButton
+              type="button"
+              onClick={() => void executeSwap()}
+              disabled={executionBusy || !executionToken || account?.chain !== "evm"}
+            >
+              {executionBusy ? "Waiting for wallet…" : "Approve exact amount and swap"}
+            </FlashButton>
+            <button type="button" className="text-button" disabled={executionBusy} onClick={() => {
+              setEvmOrder(null);
+              setOrderIdempotencyKey(null);
+            }}>Discard quote</button>
+          </div>
+        )}
         {executionResult && (
           <p className={executionResult.status === "success" ? "message message--success" : "muted"} role="status">
             EVM settlement: {executionResult.status}
             {executionResult.transactionHash ? ` · ${executionResult.transactionHash}` : ""}
             {executionResult.error ? ` · ${executionResult.error}` : ""}
           </p>
+        )}
+        {executionResult?.status === "processing" && settlementExecutionId && (
+          <FlashButton type="button" onClick={() => void refreshSettlement()} disabled={executionBusy}>
+            {executionBusy ? "Checking settlement…" : "Refresh settlement status"}
+          </FlashButton>
         )}
       </div>
       <p className="wallet-disclaimer">Quotes compare 0x, 1inch, and ParaSwap. Settlement uses a fresh 0x quote, wallet-confirmed exact-input approval and swap transactions, and server-side RPC receipt verification. The app never holds keys. Confirm token addresses, amounts, spender, network, and wallet prompts before signing.</p>

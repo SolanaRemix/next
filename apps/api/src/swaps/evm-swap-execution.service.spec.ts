@@ -35,6 +35,9 @@ const orderRow = {
   sellToken,
   buyToken,
   sellAmount: '1000000',
+  sellDecimals: 6,
+  buyDecimals: 18,
+  maxSlippageBps: 100,
   buyAmount: '2000000',
   minimumBuyAmount: '1980000',
   allowanceSpender: spender,
@@ -51,13 +54,23 @@ const orderRow = {
 };
 
 function createPrismaMock() {
+  const evmSwapOrder = {
+    findUnique: vi.fn(),
+    findFirst: vi.fn(),
+    create: vi.fn(),
+    updateMany: vi.fn(),
+  };
+  const transaction = {
+    evmSwapOrder,
+    $queryRaw: vi.fn(async () => [{ enabled: true }]),
+    auditLog: { create: vi.fn() },
+  };
   return {
-    evmSwapOrder: {
-      findUnique: vi.fn(),
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      updateMany: vi.fn(),
-    },
+    evmSwapOrder,
+    auditLog: transaction.auditLog,
+    $transaction: vi.fn(async (operation: (tx: typeof transaction) => Promise<unknown>) =>
+      operation(transaction),
+    ),
   };
 }
 
@@ -123,6 +136,30 @@ describe('EvmSwapExecutionService', () => {
         minimumBuyAmount: '1980000',
       }),
     }));
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+  });
+
+  it('does not admit a quote if the kill switch is disabled while 0x is responding', async () => {
+    const queryRaw = vi.fn(async () => [{ enabled: false }]);
+    prisma.$transaction.mockImplementationOnce(async (operation) =>
+      operation({
+        evmSwapOrder: prisma.evmSwapOrder,
+        $queryRaw: queryRaw,
+        auditLog: prisma.auditLog,
+      }),
+    );
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      sellToken,
+      buyToken,
+      sellAmount: request.sellAmount,
+      buyAmount: '2000000',
+      allowanceTarget: spender,
+      issues: { allowance: null },
+      transaction: { to: txTo, data: txData, value: '0', from: taker },
+    })));
+
+    await expect(service.order('user-1', request)).rejects.toThrow(/disabled by the global control/);
+    expect(prisma.evmSwapOrder.create).not.toHaveBeenCalled();
   });
 
   it('fails closed when global financial execution is disabled', async () => {
@@ -133,6 +170,16 @@ describe('EvmSwapExecutionService', () => {
     await expect(service.order('user-1', request)).rejects.toThrow('disabled');
     expect(fetch).not.toHaveBeenCalled();
     expect(prisma.evmSwapOrder.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects idempotency replays that change the original slippage policy', async () => {
+    prisma.evmSwapOrder.findUnique.mockResolvedValue(orderRow);
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(service.order('user-1', { ...request, maxSlippageBps: 200 }))
+      .rejects.toThrow(/different EVM swap/);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('rejects an aggregator transaction that does not match the requested assets', async () => {
@@ -190,6 +237,16 @@ describe('EvmSwapExecutionService', () => {
       'eth_blockNumber',
     ]);
     expect(prisma.evmSwapOrder.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        actorId: 'user-1',
+        action: 'swap.evm.settlement.confirmed',
+        metadata: expect.objectContaining({
+          outcome: 'success',
+          transactionHash,
+        }),
+      }),
+    }));
   });
 
   it('rejects a transaction whose calldata differs from the persisted 0x order', async () => {

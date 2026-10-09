@@ -102,6 +102,7 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({
     ...validConfig,
     NODE_ENV: 'production',
+    REDIS_URL: 'rediss://redis.example.com:6380',
     EVM_RPC_URL_1: 'http://localhost:8545',
     })).toThrow(/EVM_RPC_URL_1/);
     expect(() => validateEnvironment({
