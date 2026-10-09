@@ -176,7 +176,7 @@ describe('AuthService', () => {
   });
 
   it('lists only the user sessions and never returns refresh token hashes', async () => {
-    const { service, transaction } = createFixture();
+    const { service, prisma } = createFixture();
     const currentToken = 'A'.repeat(43);
     const current = {
       id: 'c15c090e-2615-4e52-ad67-f212a4154074',
