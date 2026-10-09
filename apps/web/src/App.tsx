@@ -15,6 +15,11 @@ const PerpetualTradingPanel = lazy(() =>
 const SwapPanel = lazy(() =>
   import("./swaps/SwapPanel").then((module) => ({ default: module.SwapPanel })),
 );
+const SolanaMarketPanel = lazy(() =>
+  import("./solana-market/SolanaMarketPanel").then((module) => ({
+    default: module.SolanaMarketPanel,
+  })),
+);
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -22,6 +27,7 @@ export function App() {
   const { accessToken, user } = useAuth();
   const roleRank = { Guest: 0, Viewer: 1, Trader: 2, EnterpriseAdmin: 3, SuperAdmin: 4 } as const;
   const swapToken = user && roleRank[user.role] >= roleRank.Viewer ? accessToken : null;
+  const marketToken = user && roleRank[user.role] >= roleRank.Viewer ? accessToken : null;
   const riskToken = user && roleRank[user.role] >= roleRank.Trader ? accessToken : null;
   const apiUrl = import.meta.env.VITE_API_URL;
   const onboardingStore = useMemo(
@@ -60,6 +66,11 @@ export function App() {
       <section className="perpetual-section" aria-label="Multi-aggregator swap quote">
         <Suspense fallback={<GlassCard className="feature-loading">Loading swap quotes…</GlassCard>}>
           <SwapPanel accessToken={swapToken} authenticated={user !== null} />
+        </Suspense>
+      </section>
+      <section className="perpetual-section" aria-label="Solana token markets">
+        <Suspense fallback={<GlassCard className="feature-loading">Loading Solana market data…</GlassCard>}>
+          <SolanaMarketPanel accessToken={marketToken} />
         </Suspense>
       </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>

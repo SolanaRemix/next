@@ -45,4 +45,26 @@ describe('validateEnvironment', () => {
       REDIS_URL: 'rediss://redis.example.com:6380',
     })).toMatchObject({ REDIS_URL: 'rediss://redis.example.com:6380' });
   });
+
+  it('requires valid countries and trusted proxy CIDRs for geographic restrictions', () => {
+    expect(() => validateEnvironment({
+      ...validConfig,
+      GEO_BLOCKED_COUNTRIES: 'US,GB',
+    })).toThrow(/trusted proxy CIDRs/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      GEO_BLOCKED_COUNTRIES: 'USA',
+      GEO_TRUSTED_PROXY_CIDRS: '192.0.2.0/24',
+    })).toThrow(/ISO country codes/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      GEO_BLOCKED_COUNTRIES: 'US',
+      GEO_TRUSTED_PROXY_CIDRS: 'not-a-cidr',
+    })).toThrow(/valid CIDR ranges/i);
+    expect(validateEnvironment({
+      ...validConfig,
+      GEO_BLOCKED_COUNTRIES: 'US, GB',
+      GEO_TRUSTED_PROXY_CIDRS: '192.0.2.0/24,2001:db8::/32',
+    })).toMatchObject({ GEO_BLOCKED_COUNTRIES: 'US, GB' });
+  });
 });

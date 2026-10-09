@@ -68,6 +68,20 @@ button { color: inherit; }
 .swap-route > div:nth-child(2) { align-items: baseline; }
 .swap-route > div:nth-child(2) > span:first-child { font-weight: 700; }
 .swap-route small { font-size: 0.75rem; }
+.solana-market-panel { margin-top: 24px; padding: 25px; }
+.solana-market-search { align-items: end; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) auto; margin: 18px 0; }
+.solana-market-search label { color: var(--text-muted); display: grid; font-size: 0.86rem; gap: 7px; grid-column: 1 / -1; }
+.solana-market-search input { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); min-height: 44px; padding: 0 12px; }
+.solana-market-search input:focus { border-color: var(--brand-orange); outline: 2px solid rgba(255, 87, 34, 0.25); }
+.solana-market-list { display: grid; gap: 8px; }
+.solana-token-row { align-items: center; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 13px; display: grid; gap: 12px; grid-template-columns: minmax(150px, 1.3fr) repeat(3, minmax(100px, 0.8fr)) minmax(120px, 1fr); padding: 12px; }
+.solana-token-identity { align-items: center; display: flex; gap: 10px; min-width: 0; }
+.solana-token-identity img, .solana-token-fallback { align-items: center; background: rgba(255, 87, 34, 0.12); border-radius: 50%; display: flex; flex: 0 0 36px; height: 36px; justify-content: center; object-fit: cover; width: 36px; }
+.solana-token-identity > div, .solana-token-market { display: grid; gap: 3px; min-width: 0; }
+.solana-token-identity > div span, .solana-token-market span { font-size: 0.74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.solana-token-market strong { font-size: 0.88rem; }
+.solana-token-venues { align-items: center; display: flex; flex-wrap: wrap; gap: 5px; }
+.solana-market-list > small { padding: 4px 0; }
 .perpetual-panel { padding: 25px; }
 .perpetual-form { display: grid; gap: 18px; }
 .trade-toggle { background: rgba(0, 0, 0, 0.28); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; display: grid; gap: 6px; grid-template-columns: 1fr 1fr; padding: 5px; }
@@ -111,6 +125,9 @@ footer { color: var(--text-muted); font-size: 0.78rem; padding: 30px 0; }
   .hero { padding-top: 48px; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .perpetual-fields, .risk-result dl { grid-template-columns: 1fr; }
+  .solana-token-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .solana-token-identity { grid-column: 1 / -1; }
+  .solana-token-venues { grid-column: 1 / -1; }
   .auth-form { grid-template-columns: 1fr; }
   .auth-note, .auth-actions { grid-column: auto; }
   .wallet-account { align-items: start; flex-direction: column; }

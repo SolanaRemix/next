@@ -99,3 +99,24 @@ export interface SwapQuoteResponse {
   unavailableProviders: EvmQuoteProvider[];
   quotedAt: string;
 }
+
+export interface SolanaMarketToken {
+  mint: string;
+  name: string;
+  symbol: string;
+  decimals: number | null;
+  logoUri: string | null;
+  priceUsd: number | null;
+  marketSpreadBps: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  venues: string[];
+  priceSource: "Jupiter" | "DEX Screener" | null;
+}
+
+export interface SolanaMarketSearchResponse {
+  query: string;
+  tokens: SolanaMarketToken[];
+  unavailableProviders: Array<"Jupiter" | "DEX Screener">;
+  asOf: string;
+}

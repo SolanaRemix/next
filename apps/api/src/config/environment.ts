@@ -1,3 +1,5 @@
+import ipaddr from 'ipaddr.js';
+
 export function validateEnvironment(config: Record<string, unknown>): Record<string, unknown> {
   const databaseUrl = config.DATABASE_URL;
   const jwtSecret = config.JWT_ACCESS_SECRET;
@@ -37,6 +39,41 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
       }
     } catch {
       throw new Error('REDIS_URL must be a valid Redis endpoint and use database 0 in production.');
+    }
+  }
+  const blockedCountries = config.GEO_BLOCKED_COUNTRIES;
+  const trustedProxyCidrs = config.GEO_TRUSTED_PROXY_CIDRS;
+  if (blockedCountries !== undefined) {
+    if (typeof blockedCountries !== 'string') {
+      throw new Error('GEO_BLOCKED_COUNTRIES must be a comma-separated list of ISO country codes.');
+    }
+    const countries = blockedCountries.split(',').map((country) => country.trim()).filter(Boolean);
+    if (
+      countries.some((country) => !/^[A-Z]{2}$/.test(country)) ||
+      (countries.length > 0 && typeof trustedProxyCidrs !== 'string')
+    ) {
+      throw new Error('Geo controls require ISO country codes and trusted proxy CIDRs.');
+    }
+  }
+  if (trustedProxyCidrs !== undefined) {
+    if (typeof trustedProxyCidrs !== 'string') {
+      throw new Error('GEO_TRUSTED_PROXY_CIDRS must be a comma-separated list of CIDR ranges.');
+    }
+    const cidrs = trustedProxyCidrs.split(',').map((cidr) => cidr.trim()).filter(Boolean);
+    if (
+      cidrs.some((cidr) => {
+        try {
+          ipaddr.parseCIDR(cidr);
+          return false;
+        } catch {
+          return true;
+        }
+      }) ||
+      (typeof blockedCountries === 'string' &&
+        blockedCountries.split(',').map((country) => country.trim()).filter(Boolean).length > 0 &&
+        cidrs.length === 0)
+    ) {
+      throw new Error('GEO_TRUSTED_PROXY_CIDRS must contain valid CIDR ranges when geo controls are enabled.');
     }
   }
   const webOrigin = config.WEB_ORIGIN;

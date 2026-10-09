@@ -11,6 +11,8 @@ import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisThrottlerModule } from './throttling/redis-throttler.module.js';
 import { SwapsModule } from './swaps/swaps.module.js';
 import { validateEnvironment } from './config/environment.js';
+import { GeographicAccessGuard } from './geo/geographic-access.guard.js';
+import { SolanaMarketModule } from './solana-market/solana-market.module.js';
 
 @Module({
   imports: [
@@ -26,10 +28,12 @@ import { validateEnvironment } from './config/environment.js';
     PrismaModule,
     AuthModule,
     PerpetualsModule,
+    SolanaMarketModule,
     SwapsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: GeographicAccessGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
