@@ -291,11 +291,24 @@ export class SolanaSwapExecutionService {
     });
     if (!row) throw new NotFoundException('Swap order was not found.');
 
+    const decodedTransaction = Buffer.from(request.signedTransaction, 'base64');
+    if (
+      decodedTransaction.length === 0 ||
+      decodedTransaction.length > maxSolanaTransactionBytes ||
+      decodedTransaction.toString('base64') !== request.signedTransaction
+    ) {
+      throw new ConflictException('Signed transaction is invalid or exceeds the Solana size limit.');
+    }
+    const signedTransactionHash = createHash('sha256').update(decodedTransaction).digest('hex');
+    if (
+      row.executionStatus !== 'ORDERED' &&
+      (row.executionKey !== request.idempotencyKey ||
+        row.signedTransactionHash !== signedTransactionHash)
+    ) {
+      throw new ConflictException('Retry must use the original idempotency key and signed transaction.');
+    }
     const previousResponse = toExecutionResponse(row.executionResult);
     if (row.executionStatus === 'SUCCEEDED' || row.executionStatus === 'FAILED') {
-      if (row.executionKey !== request.idempotencyKey) {
-        throw new ConflictException('This swap order has already been submitted.');
-      }
       if (previousResponse) return previousResponse;
       return { status: 'processing', signature: null, error: null };
     }
@@ -308,21 +321,6 @@ export class SolanaSwapExecutionService {
 
     const apiKey = this.config.get<string>('JUPITER_API_KEY');
     if (!apiKey) throw new ServiceUnavailableException('Solana swap execution is not configured.');
-    const decodedTransaction = Buffer.from(request.signedTransaction, 'base64');
-    if (
-      decodedTransaction.length === 0 ||
-      decodedTransaction.length > maxSolanaTransactionBytes ||
-      decodedTransaction.toString('base64') !== request.signedTransaction
-    ) {
-      throw new ConflictException('Signed transaction is invalid or exceeds the Solana size limit.');
-    }
-    const signedTransactionHash = createHash('sha256').update(decodedTransaction).digest('hex');
-    if (
-      row.executionStatus === 'EXECUTING' &&
-      row.signedTransactionHash !== signedTransactionHash
-    ) {
-      throw new ConflictException('Retry must use the original signed transaction.');
-    }
     const canRetryInFlight = row.executionStatus === 'EXECUTING' &&
       Date.now() - row.updatedAt.getTime() >= executionRetryWaitMs;
     if (row.executionStatus === 'EXECUTING' && !canRetryInFlight) {
@@ -358,15 +356,18 @@ export class SolanaSwapExecutionService {
       const latest = await this.prisma.solanaSwapOrder.findUnique({ where: { id: row.id } });
       if (
         latest?.executionKey === request.idempotencyKey &&
+        latest.signedTransactionHash !== signedTransactionHash
+      ) {
+        throw new ConflictException('Retry must use the original signed transaction.');
+      }
+      if (
+        latest?.executionKey === request.idempotencyKey &&
         latest.executionResult
       ) {
         return toExecutionResponse(latest.executionResult) ??
           { status: 'processing', signature: null, error: null };
       }
       if (latest?.executionKey === request.idempotencyKey) {
-        if (latest.signedTransactionHash !== signedTransactionHash) {
-          throw new ConflictException('Retry must use the original signed transaction.');
-        }
         return { status: 'processing', signature: latest.transactionSignature, error: null };
       }
       throw new ConflictException('This swap order has already been submitted.');

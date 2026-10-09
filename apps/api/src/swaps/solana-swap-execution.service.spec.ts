@@ -257,8 +257,37 @@ describe('SolanaSwapExecutionService', () => {
       requestId,
       signedTransaction: Buffer.from([1, ...new Array<number>(64).fill(2), 7]).toString('base64'),
       idempotencyKey,
-    })).rejects.toThrow(/original signed transaction/);
+    })).rejects.toThrow(/original idempotency key and signed transaction/);
     expect(fetch).not.toHaveBeenCalled();
+    expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a different signed transaction when replaying a completed order', async () => {
+    prisma.solanaSwapOrder.findFirst.mockResolvedValue({
+      id: executionId,
+      requestId,
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 30_000),
+      executionStatus: 'SUCCEEDED',
+      executionKey: idempotencyKey,
+      executionResult: {
+        status: 'success',
+        signature: '1'.repeat(32),
+        error: null,
+      },
+      transactionSignature: '1'.repeat(32),
+      signedTransactionHash: createHash('sha256')
+        .update(Buffer.from(encodedTransaction, 'base64'))
+        .digest('hex'),
+      updatedAt: new Date(),
+    });
+
+    await expect(service.execute('user-1', {
+      executionId,
+      requestId,
+      signedTransaction: Buffer.from([1, ...new Array<number>(64).fill(3), 7]).toString('base64'),
+      idempotencyKey,
+    })).rejects.toThrow(/original idempotency key and signed transaction/);
     expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
   });
 });
