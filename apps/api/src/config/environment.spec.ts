@@ -25,4 +25,19 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({ ...validConfig, WEB_ORIGIN: 'javascript:alert(1)' }))
       .toThrow(/WEB_ORIGIN/);
   });
+
+  it('requires a valid Redis URL in production and accepts TLS URLs', () => {
+    expect(() => validateEnvironment({ ...validConfig, NODE_ENV: 'production' }))
+      .toThrow(/REDIS_URL is required/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      NODE_ENV: 'production',
+      REDIS_URL: 'https://redis.example.com',
+    })).toThrow(/REDIS_URL/);
+    expect(validateEnvironment({
+      ...validConfig,
+      NODE_ENV: 'production',
+      REDIS_URL: 'rediss://redis.example.com:6380',
+    })).toMatchObject({ REDIS_URL: 'rediss://redis.example.com:6380' });
+  });
 });

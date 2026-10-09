@@ -18,6 +18,26 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
   if (typeof jwtSecret !== 'string' || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
     throw new Error('JWT_ACCESS_SECRET must contain at least 32 bytes.');
   }
+  const redisUrl = config.REDIS_URL;
+  if (config.NODE_ENV === 'production' && typeof redisUrl !== 'string') {
+    throw new Error('REDIS_URL is required in production.');
+  }
+  if (redisUrl !== undefined) {
+    if (typeof redisUrl !== 'string') throw new Error('REDIS_URL must be a valid Redis URL.');
+    try {
+      const redis = new URL(redisUrl);
+      if (
+        !['redis:', 'rediss:'].includes(redis.protocol) ||
+        !redis.hostname ||
+        redis.search ||
+        redis.hash
+      ) {
+        throw new Error('REDIS_URL must use redis:// or rediss://.');
+      }
+    } catch {
+      throw new Error('REDIS_URL must use redis:// or rediss:// and include a hostname.');
+    }
+  }
   const webOrigin = config.WEB_ORIGIN;
   if (webOrigin !== undefined) {
     if (typeof webOrigin !== 'string') throw new Error('WEB_ORIGIN must be a valid origin URL.');
