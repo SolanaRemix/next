@@ -15,6 +15,7 @@ import { GeographicAccessGuard } from './geo/geographic-access.guard.js';
 import { SolanaMarketModule } from './solana-market/solana-market.module.js';
 import { FinancialControlsModule } from './financial-controls/financial-controls.module.js';
 import { HealthModule } from './health/health.module.js';
+import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.module.js';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { HealthModule } from './health/health.module.js';
     SolanaMarketModule,
     FinancialControlsModule,
     HealthModule,
+    PortfolioPricesModule,
     SwapsModule,
   ],
   providers: [

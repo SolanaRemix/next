@@ -193,3 +193,19 @@ export interface SolanaMarketSearchResponse {
   unavailableProviders: Array<"Jupiter" | "DEX Screener">;
   asOf: string;
 }
+
+export interface EvmPortfolioPricesRequest {
+  chainId: string;
+  tokenAddresses: string[];
+}
+
+export interface EvmPortfolioPricesResponse {
+  chainId: string;
+  nativePriceUsd: number | null;
+  tokenPrices: Array<{
+    address: string;
+    priceUsd: number | null;
+  }>;
+  source: "CoinGecko";
+  asOf: string;
+}
