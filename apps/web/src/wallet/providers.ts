@@ -1,29 +1,12 @@
-import {
-  Connection,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-} from "@solana/web3.js";
 import type { NativeTransferRequest, TransferReceipt, WalletAccount, WalletBalance } from "@next/types";
 
 interface Eip1193Provider {
   request(args: { method: string; params?: readonly unknown[] }): Promise<unknown>;
 }
 
-interface SolanaWalletProvider {
-  isPhantom?: boolean;
-  isSolflare?: boolean;
-  publicKey?: { toBase58(): string } | null;
-  connect(): Promise<{ publicKey?: { toBase58(): string } } | void>;
-  disconnect(): Promise<void>;
-  signAndSendTransaction(transaction: Transaction): Promise<string | { signature: string }>;
-}
-
 declare global {
   interface Window {
     ethereum?: Eip1193Provider;
-    solana?: SolanaWalletProvider;
-    solflare?: SolanaWalletProvider;
   }
 }
 
@@ -49,12 +32,6 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
 function getEvmProvider(): Eip1193Provider {
   const provider = typeof window === "undefined" ? undefined : window.ethereum;
   if (!provider) throw new Error("No EVM wallet detected. Install a compatible wallet and try again.");
-  return provider;
-}
-
-function getSolanaProvider(): SolanaWalletProvider {
-  const provider = typeof window === "undefined" ? undefined : (window.solana ?? window.solflare);
-  if (!provider) throw new Error("No Solana wallet detected. Install Phantom or Solflare and try again.");
   return provider;
 }
 
@@ -87,20 +64,15 @@ export async function connectEvmWallet(): Promise<WalletAccount> {
 }
 
 export async function connectSolanaWallet(): Promise<WalletAccount> {
-  const provider = getSolanaProvider();
-  const connected = await provider.connect();
-  const publicKey = connected?.publicKey ?? provider.publicKey;
-  if (!publicKey) throw new Error("Wallet did not return a Solana account.");
-  return {
-    address: publicKey.toBase58(),
-    chain: "solana",
-    chainId: "mainnet-beta",
-    connectedAt: new Date().toISOString(),
-  };
+  const solana = await import("./solanaProviders");
+  return solana.connectSolanaWallet();
 }
 
 export async function disconnectWallet(chain: WalletAccount["chain"]): Promise<void> {
-  if (chain === "solana") await getSolanaProvider().disconnect();
+  if (chain === "solana") {
+    const solana = await import("./solanaProviders");
+    await solana.disconnectSolanaWallet();
+  }
 }
 
 export async function fetchNativeBalance(account: WalletAccount): Promise<WalletBalance> {
@@ -120,18 +92,8 @@ export async function fetchNativeBalance(account: WalletAccount): Promise<Wallet
       decimals: 18,
     };
   }
-  const connection = new Connection(
-    import.meta.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
-    "confirmed",
-  );
-  const lamports = await connection.getBalance(new PublicKey(account.address));
-  return {
-    address: account.address,
-    chain: account.chain,
-    asset: "SOL",
-    amount: formatUnits(BigInt(lamports), 9),
-    decimals: 9,
-  };
+  const solana = await import("./solanaProviders");
+  return solana.fetchSolanaNativeBalance(account);
 }
 
 export async function sendNativeTransfer(
@@ -176,30 +138,6 @@ export async function sendNativeTransfer(
     return { chain: "evm", transactionId, status: "submitted" };
   }
 
-  let destination: PublicKey;
-  try {
-    destination = new PublicKey(request.to);
-  } catch {
-    throw new Error("Enter a valid destination Solana address.");
-  }
-  const provider = getSolanaProvider();
-  const connection = new Connection(
-    import.meta.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
-    "confirmed",
-  );
-  const transaction = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: new PublicKey(account.address),
-      toPubkey: destination,
-      lamports: parseTokenAmount(request.amount, 9),
-    }),
-  );
-  transaction.feePayer = new PublicKey(account.address);
-  transaction.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
-  const result = await provider.signAndSendTransaction(transaction);
-  const transactionId = typeof result === "string" ? result : result.signature;
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(transactionId)) {
-    throw new Error("Wallet returned an invalid Solana transaction identifier.");
-  }
-  return { chain: "solana", transactionId, status: "submitted" };
+  const solana = await import("./solanaProviders");
+  return solana.sendSolanaNativeTransfer(account, request);
 }

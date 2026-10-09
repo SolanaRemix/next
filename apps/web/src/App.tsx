@@ -1,11 +1,18 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { GlassCard } from "@next/ui";
 import { Onboarding } from "./onboarding/Onboarding";
 import { backendOnboardingStore, localOnboardingStore } from "./onboarding/onboardingStore";
 import { WalletPanel } from "./wallet/WalletPanel";
 import { useWallet } from "./wallet/WalletContext";
-import { PerpetualTradingPanel } from "./perpetuals/PerpetualTradingPanel";
-import { SwapPanel } from "./swaps/SwapPanel";
+
+const PerpetualTradingPanel = lazy(() =>
+  import("./perpetuals/PerpetualTradingPanel").then((module) => ({
+    default: module.PerpetualTradingPanel,
+  })),
+);
+const SwapPanel = lazy(() =>
+  import("./swaps/SwapPanel").then((module) => ({ default: module.SwapPanel })),
+);
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -39,10 +46,14 @@ export function App() {
         </GlassCard>
       </div>
       <section className="perpetual-section" aria-label="Perpetual trading risk check">
-        <PerpetualTradingPanel />
+        <Suspense fallback={<GlassCard className="feature-loading">Loading risk tools…</GlassCard>}>
+          <PerpetualTradingPanel />
+        </Suspense>
       </section>
       <section className="perpetual-section" aria-label="Multi-aggregator swap quote">
-        <SwapPanel />
+        <Suspense fallback={<GlassCard className="feature-loading">Loading swap quotes…</GlassCard>}>
+          <SwapPanel />
+        </Suspense>
       </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>
       <Onboarding
