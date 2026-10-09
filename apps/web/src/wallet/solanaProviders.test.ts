@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Connection,
   Keypair,
+  Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
 import {
@@ -194,6 +195,13 @@ describe("Solana native transfer simulation", () => {
       totalEstimatedDebit: "0.500005",
     });
     expect(signAndSendTransaction).not.toHaveBeenCalled();
+    const simulated = simulate.mock.calls[0]?.[0];
+    expect(simulated).toBeInstanceOf(Transaction);
+    if (simulated instanceof Transaction) {
+      expect(Array.from(simulated.instructions[0]?.data ?? [])).toEqual([
+        2, 0, 0, 0, 0, 0x65, 0xcd, 0x1d, 0, 0, 0, 0,
+      ]);
+    }
 
     await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toEqual({
       chain: "solana",

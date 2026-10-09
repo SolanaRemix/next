@@ -386,12 +386,12 @@ export function WalletPanel() {
           )}
           <form className="transfer-form" onSubmit={(event) => void reviewTransfer(event)}>
             <h3>Send native asset</h3>
-            <label>Recipient address<input required autoComplete="off" value={recipient} onChange={(event) => {
+            <label>Recipient address<input required autoComplete="off" disabled={busy} value={recipient} onChange={(event) => {
               setRecipient(event.target.value);
               setTransferSimulation(null);
               setNotice(null);
             }} /></label>
-            <label>Amount<input required inputMode="decimal" min="0" step="any" type="number" value={amount} onChange={(event) => {
+            <label>Amount<input required inputMode="decimal" min="0" step="any" type="number" disabled={busy} value={amount} onChange={(event) => {
               setAmount(event.target.value);
               setTransferSimulation(null);
               setNotice(null);
