@@ -112,6 +112,112 @@ export async function fetchNativeBalance(account: WalletAccount): Promise<Wallet
   return solana.fetchSolanaNativeBalance(account);
 }
 
+function decodeAbiString(value: unknown): string {
+  if (typeof value !== "string" || !/^0x(?:[0-9a-f]{2})+$/i.test(value)) {
+    throw new Error("Wallet returned invalid token metadata.");
+  }
+  const bytes = value.slice(2).match(/.{2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? [];
+  if (bytes.length === 32) {
+    const end = bytes.findIndex((byte) => byte === 0);
+    const symbol = new TextDecoder("utf-8", { fatal: true }).decode(
+      new Uint8Array(bytes.slice(0, end === -1 ? bytes.length : end)),
+    );
+    if (!symbol || symbol.length > 32 || /[\u0000-\u001f\u007f]/.test(symbol)) {
+      throw new Error("Token returned an invalid symbol.");
+    }
+    return symbol;
+  }
+  const offset = Number(BigInt(`0x${bytes.slice(0, 32).map((byte) => byte.toString(16).padStart(2, "0")).join("")}`));
+  if (!Number.isSafeInteger(offset) || offset < 32 || offset % 32 !== 0 || offset + 32 > bytes.length) {
+    throw new Error("Wallet returned invalid token metadata.");
+  }
+  const length = Number(BigInt(`0x${bytes.slice(offset, offset + 32).map((byte) => byte.toString(16).padStart(2, "0")).join("")}`));
+  if (!Number.isSafeInteger(length) || length < 1 || length > 32 || offset + 32 + length > bytes.length) {
+    throw new Error("Token returned an invalid symbol.");
+  }
+  const symbol = new TextDecoder("utf-8", { fatal: true }).decode(
+    new Uint8Array(bytes.slice(offset + 32, offset + 32 + length)),
+  );
+  if (/[\u0000-\u001f\u007f]/.test(symbol)) throw new Error("Token returned an invalid symbol.");
+  return symbol;
+}
+
+function decodeAbiUint(value: unknown, field: string, maximum: bigint): number {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/i.test(value)) {
+    throw new Error(`Wallet returned invalid token ${field}.`);
+  }
+  const decoded = BigInt(value);
+  if (decoded > maximum) throw new Error(`Token returned unsupported ${field}.`);
+  return Number(decoded);
+}
+
+export async function fetchEvmTokenBalances(
+  account: WalletAccount,
+  tokenAddresses: readonly string[],
+): Promise<WalletBalance[]> {
+  if (account.chain !== "evm") throw new Error("Connect an EVM wallet to read ERC-20 balances.");
+  const provider = getEvmProvider();
+  const [chainId, accounts] = await Promise.all([
+    provider.request({ method: "eth_chainId" }),
+    provider.request({ method: "eth_accounts" }),
+  ]);
+  if (chainId !== account.chainId || !Array.isArray(accounts) || !accounts.some(
+    (address) => typeof address === "string" && address.toLowerCase() === account.address.toLowerCase(),
+  )) {
+    throw new Error("The connected EVM account or network changed. Reconnect before refreshing.");
+  }
+  const uniqueAddresses = [...new Set(tokenAddresses.map((address) => address.toLowerCase()))];
+  const balances = await Promise.all(uniqueAddresses.map(async (tokenAddress) => {
+    if (!evmAddressPattern.test(tokenAddress)) throw new Error("Invalid ERC-20 token address.");
+    const [symbolResult, decimalsResult, balanceResult] = await Promise.all([
+      provider.request({ method: "eth_call", params: [{ to: tokenAddress, data: "0x95d89b41" }, "latest"] }),
+      provider.request({ method: "eth_call", params: [{ to: tokenAddress, data: "0x313ce567" }, "latest"] }),
+      provider.request({
+        method: "eth_call",
+        params: [{
+          to: tokenAddress,
+          data: `0x70a08231${account.address.slice(2).toLowerCase().padStart(64, "0")}`,
+        }, "latest"],
+      }),
+    ]);
+    const symbol = decodeAbiString(symbolResult);
+    const decimals = decodeAbiUint(decimalsResult, "decimals", 36n);
+    const balanceUnits = parseHexQuantity(balanceResult);
+    return {
+      address: account.address,
+      chain: "evm",
+      asset: symbol,
+      amount: formatUnits(balanceUnits, decimals),
+      decimals,
+      tokenAddress,
+      kind: "token",
+    } satisfies WalletBalance;
+  }));
+  const [finalChainId, finalAccounts] = await Promise.all([
+    provider.request({ method: "eth_chainId" }),
+    provider.request({ method: "eth_accounts" }),
+  ]);
+  if (finalChainId !== account.chainId || !Array.isArray(finalAccounts) || !finalAccounts.some(
+    (address) => typeof address === "string" && address.toLowerCase() === account.address.toLowerCase(),
+  )) {
+    throw new Error("The connected EVM account or network changed. Reconnect before refreshing.");
+  }
+  return balances;
+}
+
+export async function fetchPortfolioBalances(
+  account: WalletAccount,
+  tokenAddresses: readonly string[] = [],
+): Promise<WalletBalance[]> {
+  const native = await fetchNativeBalance(account);
+  const nativeBalance: WalletBalance = { ...native, kind: "native" };
+  if (account.chain === "evm") {
+    return [nativeBalance, ...await fetchEvmTokenBalances(account, tokenAddresses)];
+  }
+  const solana = await import("./solanaProviders");
+  return [nativeBalance, ...await solana.fetchSolanaTokenBalances(account)];
+}
+
 export async function sendNativeTransfer(
   account: WalletAccount,
   request: NativeTransferRequest,

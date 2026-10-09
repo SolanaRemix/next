@@ -37,6 +37,49 @@ function getConnection(): Connection {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseTokenAccount(value: unknown): {
+  mint: string;
+  amount: bigint;
+  decimals: number;
+} {
+  if (!isRecord(value) || !isRecord(value.account) || !isRecord(value.account.data)) {
+    throw new Error("Solana RPC returned an invalid token account.");
+  }
+  const data = value.account.data;
+  if (!isRecord(data.parsed) || !isRecord(data.parsed.info)) {
+    throw new Error("Solana RPC returned an invalid parsed token account.");
+  }
+  const info = data.parsed.info;
+  if (!isRecord(info.tokenAmount)) throw new Error("Solana RPC returned an invalid token amount.");
+  const tokenAmount = info.tokenAmount;
+  if (
+    typeof info.mint !== "string" ||
+    typeof tokenAmount.amount !== "string" ||
+    !/^(?:0|[1-9]\d{0,19})$/.test(tokenAmount.amount) ||
+    typeof tokenAmount.decimals !== "number" ||
+    !Number.isInteger(tokenAmount.decimals) ||
+    tokenAmount.decimals < 0 ||
+    tokenAmount.decimals > 255
+  ) throw new Error("Solana RPC returned an invalid token amount.");
+  try {
+    new PublicKey(info.mint);
+  } catch {
+    throw new Error("Solana RPC returned an invalid token mint.");
+  }
+  return { mint: info.mint, amount: BigInt(tokenAmount.amount), decimals: tokenAmount.decimals };
+}
+
+function formatTokenUnits(amount: bigint, decimals: number): string {
+  const scale = 10n ** BigInt(decimals);
+  const whole = amount / scale;
+  const fraction = (amount % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
 export async function connectSolanaWallet(): Promise<WalletAccount> {
   const provider = getSolanaProvider();
   const connected = await provider.connect();
@@ -63,6 +106,57 @@ export async function fetchSolanaNativeBalance(account: WalletAccount): Promise<
     amount: (lamports / LAMPORTS_PER_SOL).toString(),
     decimals: 9,
   };
+}
+
+export async function fetchSolanaTokenBalances(account: WalletAccount): Promise<WalletBalance[]> {
+  if (account.chain !== "solana") throw new Error("Connect a Solana wallet to read SPL token balances.");
+  let owner: PublicKey;
+  try {
+    owner = new PublicKey(account.address);
+  } catch {
+    throw new Error("Connected wallet returned an invalid Solana address.");
+  }
+  const connectedAddress = getSolanaProvider().publicKey?.toBase58();
+  if (connectedAddress !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before refreshing.");
+  }
+  const connection = getConnection();
+  const tokenPrograms = [
+    new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+  ];
+  const accounts = await Promise.all(tokenPrograms.map((programId) =>
+    connection.getParsedTokenAccountsByOwner(owner, { programId }),
+  ));
+  if (getSolanaProvider().publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before refreshing.");
+  }
+  const balances = new Map<string, { amount: bigint; decimals: number }>();
+  for (const response of accounts) {
+    for (const accountInfo of response.value) {
+      const token = parseTokenAccount(accountInfo);
+      if (token.amount === 0n) continue;
+      const current = balances.get(token.mint);
+      if (current && current.decimals !== token.decimals) {
+        throw new Error("Solana RPC returned inconsistent token decimals.");
+      }
+      balances.set(token.mint, {
+        amount: (current?.amount ?? 0n) + token.amount,
+        decimals: token.decimals,
+      });
+    }
+  }
+  return [...balances.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([mint, token]) => ({
+      address: account.address,
+      chain: "solana",
+      asset: `${mint.slice(0, 4)}…${mint.slice(-4)}`,
+      amount: formatTokenUnits(token.amount, token.decimals),
+      decimals: token.decimals,
+      tokenAddress: mint,
+      kind: "token",
+    }));
 }
 
 export async function sendSolanaNativeTransfer(

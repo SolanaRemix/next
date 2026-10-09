@@ -54,6 +54,17 @@ button { color: inherit; }
 .wallet-account strong { font-size: 0.92rem; overflow-wrap: anywhere; }
 .balance-tile { background: rgba(255, 255, 255, 0.035); border-radius: 14px; display: grid; gap: 8px; margin: 18px 0; padding: 17px; }
 .balance-tile strong { font-size: 1.6rem; }
+.portfolio-assets { display: grid; gap: 12px; margin: 18px 0; }
+.portfolio-assets h3 { font-size: 1rem; margin: 0; }
+.portfolio-list { display: grid; gap: 8px; }
+.portfolio-token { align-items: center; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 12px; display: flex; gap: 10px; justify-content: space-between; min-width: 0; padding: 12px; }
+.portfolio-token > div { display: grid; gap: 5px; min-width: 0; }
+.portfolio-token .muted { font-size: 0.72rem; overflow-wrap: anywhere; }
+.token-watchlist-form { border-top: 1px solid rgba(255, 255, 255, 0.07); display: grid; gap: 10px; padding-top: 13px; }
+.token-watchlist-form label { color: var(--text-muted); display: grid; font-size: 0.86rem; gap: 7px; }
+.token-watchlist-form input { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); min-height: 44px; padding: 0 12px; }
+.token-watchlist-form input:focus { border-color: var(--brand-orange); outline: 2px solid rgba(255, 87, 34, 0.25); }
+.token-watchlist-form .muted { font-size: 0.78rem; margin: 0; }
 .transfer-form { display: grid; gap: 13px; }
 .transfer-form h3 { font-size: 1rem; margin: 0; }
 .transfer-form label, .invite-input { color: var(--text-muted); display: grid; font-size: 0.86rem; gap: 7px; }

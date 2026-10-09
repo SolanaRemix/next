@@ -16,6 +16,8 @@ export interface WalletBalance {
   asset: string;
   amount: string;
   decimals: number;
+  tokenAddress?: string;
+  kind?: "native" | "token";
 }
 
 export interface NativeTransferRequest {

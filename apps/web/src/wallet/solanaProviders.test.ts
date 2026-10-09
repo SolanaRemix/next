@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  Connection,
   Keypair,
   VersionedTransaction,
 } from "@solana/web3.js";
-import { signSolanaVersionedTransaction } from "./solanaProviders";
+import { fetchSolanaTokenBalances, signSolanaVersionedTransaction } from "./solanaProviders";
 
 const account = Keypair.generate();
 const walletAccount = {
@@ -77,5 +78,67 @@ describe("signSolanaVersionedTransaction", () => {
       signSolanaVersionedTransaction(walletAccount, "AQ=="),
     ).rejects.toThrow(/account changed/i);
     expect(signTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchSolanaTokenBalances", () => {
+  it("combines non-zero SPL and Token-2022 accounts by mint using exact integer arithmetic", async () => {
+    const mint = Keypair.generate().publicKey.toBase58();
+    const secondMint = Keypair.generate().publicKey.toBase58();
+    window.solana = {
+      publicKey: account.publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+    const request = vi.spyOn(Connection.prototype, "getParsedTokenAccountsByOwner")
+      .mockImplementation(async (_owner, { programId }) => ({
+        context: { slot: 1 },
+        value: programId.toBase58() === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          ? [
+            { account: { data: { parsed: { info: {
+              mint,
+              tokenAmount: { amount: "1234567", decimals: 6 },
+            } } } } },
+            { account: { data: { parsed: { info: {
+              mint: secondMint,
+              tokenAmount: { amount: "0", decimals: 9 },
+            } } } } },
+          ]
+          : [{ account: { data: { parsed: { info: {
+            mint,
+            tokenAmount: { amount: "33", decimals: 6 },
+          } } } } }],
+      }) as never);
+
+    await expect(fetchSolanaTokenBalances(walletAccount)).resolves.toEqual([{
+      address: walletAccount.address,
+      chain: "solana",
+      asset: `${mint.slice(0, 4)}…${mint.slice(-4)}`,
+      amount: "1.2346",
+      decimals: 6,
+      tokenAddress: mint,
+      kind: "token",
+    }]);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects stale connected accounts and malformed token account data", async () => {
+    window.solana = {
+      publicKey: Keypair.generate().publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+    const request = vi.spyOn(Connection.prototype, "getParsedTokenAccountsByOwner");
+    await expect(fetchSolanaTokenBalances(walletAccount)).rejects.toThrow(/account changed/i);
+    expect(request).not.toHaveBeenCalled();
+
+    window.solana.publicKey = account.publicKey;
+    request.mockImplementation(async () => ({
+      context: { slot: 1 },
+      value: [{ account: { data: { parsed: { info: {} } } } }],
+    }) as never);
+    await expect(fetchSolanaTokenBalances(walletAccount)).rejects.toThrow(/invalid token amount/i);
   });
 });
