@@ -2,8 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useAuth } from "../auth/AuthContext";
 import { useWallet } from "./WalletContext";
-import { fetchEvmPortfolioPrices } from "./portfolioPriceClient";
-import type { EvmPortfolioPricesResponse } from "@next/types";
+import { fetchEvmPortfolioPrices, fetchSolanaPortfolioPrices } from "./portfolioPriceClient";
+import type { PortfolioPricesResponse } from "@next/types";
 import { amountInUsd, calculatePortfolioUsdValue, formatUsd } from "./portfolioValuation";
 import { addEvmTokenToWatchlist, loadEvmTokenWatchlist, removeEvmTokenFromWatchlist } from "./tokenWatchlist";
 import {
@@ -46,32 +46,34 @@ export function WalletPanel() {
   const [allowanceSpender, setAllowanceSpender] = useState("");
   const [busyAllowance, setBusyAllowance] = useState<string | null>(null);
   const [transferSimulation, setTransferSimulation] = useState<NativeTransferSimulation | null>(null);
-  const [portfolioPrices, setPortfolioPrices] = useState<EvmPortfolioPricesResponse | null>(null);
+  const [portfolioPrices, setPortfolioPrices] = useState<PortfolioPricesResponse | null>(null);
   const [portfolioPriceError, setPortfolioPriceError] = useState<string | null>(null);
   const [busyPrices, setBusyPrices] = useState(false);
   const [priceRefreshVersion, setPriceRefreshVersion] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const priceChainMatches = account?.chain === "evm" &&
-    portfolioPrices?.chainId === account.chainId.toLowerCase();
+  const priceChainMatches = account !== null && portfolioPrices?.chainId ===
+    (account.chain === "evm" ? account.chainId.toLowerCase() : account.chainId);
+  const normalizePriceAddress = (address: string): string =>
+    account?.chain === "evm" ? address.toLowerCase() : address;
   const tokenPrices = new Map(
     priceChainMatches
-      ? portfolioPrices.tokenPrices.map(({ address, priceUsd }) => [address.toLowerCase(), priceUsd])
+      ? portfolioPrices.tokenPrices.map(({ address, priceUsd }) => [normalizePriceAddress(address), priceUsd])
       : [],
   );
   const nativeUsdValue = balance && priceChainMatches && portfolioPrices
     ? amountInUsd(balance.amount, portfolioPrices.nativePriceUsd)
     : null;
   const tokenUsdValue = (address: string | undefined, amount: string): number | null =>
-    address ? amountInUsd(amount, tokenPrices.get(address.toLowerCase())) : null;
-  const totalPortfolioUsd = account?.chain === "evm" && priceChainMatches && portfolioPrices
+    address ? amountInUsd(amount, tokenPrices.get(normalizePriceAddress(address))) : null;
+  const totalPortfolioUsd = account && priceChainMatches && portfolioPrices
     ? calculatePortfolioUsdValue(
       balance?.amount ?? null,
       portfolioPrices.nativePriceUsd,
       tokenBalances.map((token) => ({
         amount: token.amount,
-        priceUsd: token.tokenAddress ? tokenPrices.get(token.tokenAddress.toLowerCase()) : null,
+        priceUsd: token.tokenAddress ? tokenPrices.get(normalizePriceAddress(token.tokenAddress)) : null,
       })),
-      trackedTokens.length,
+      account.chain === "evm" ? trackedTokens.length : tokenBalances.length,
     )
     : null;
 
@@ -114,7 +116,7 @@ export function WalletPanel() {
   useEffect(() => {
     setPortfolioPrices(null);
     setPortfolioPriceError(null);
-    if (!account || account.chain !== "evm") {
+    if (!account) {
       setBusyPrices(false);
       return;
     }
@@ -126,7 +128,16 @@ export function WalletPanel() {
     const controller = new AbortController();
     let active = true;
     setBusyPrices(true);
-    void fetchEvmPortfolioPrices(account.chainId.toLowerCase(), trackedTokens, accessToken, controller.signal)
+    const priceAddresses = account.chain === "evm"
+      ? trackedTokens
+      : tokenBalances
+        .flatMap((token) => token.tokenAddress ? [token.tokenAddress] : [])
+        .filter((mint) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint))
+        .slice(0, 50);
+    const loadPrices = account.chain === "evm"
+      ? fetchEvmPortfolioPrices(account.chainId.toLowerCase(), priceAddresses, accessToken, controller.signal)
+      : fetchSolanaPortfolioPrices(account.chainId, priceAddresses, accessToken, controller.signal);
+    void loadPrices
       .then((prices) => {
         if (active) setPortfolioPrices(prices);
       })
@@ -142,7 +153,7 @@ export function WalletPanel() {
       active = false;
       controller.abort();
     };
-  }, [account, accessToken, user, trackedTokens, priceRefreshVersion]);
+  }, [account, accessToken, user, trackedTokens, tokenBalances, priceRefreshVersion]);
 
   async function reviewTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -308,12 +319,9 @@ export function WalletPanel() {
           <div className="balance-tile">
             <span className="muted">Native balance</span>
             <strong>{balance ? `${balance.amount} ${balance.asset}` : "Not loaded"}</strong>
-            {account.chain === "evm" && (
-              <span className="muted">{nativeUsdValue === null ? "USD price unavailable" : `≈ ${formatUsd(nativeUsdValue)}`}</span>
-            )}
+            <span className="muted">{nativeUsdValue === null ? "USD price unavailable" : `≈ ${formatUsd(nativeUsdValue)}`}</span>
           </div>
-          {account.chain === "evm" && (
-            <div className="balance-tile portfolio-usd-value">
+          <div className="balance-tile portfolio-usd-value">
               <div className="section-heading">
                 <span className="muted">Indicative portfolio value</span>
                 <button
@@ -335,8 +343,7 @@ export function WalletPanel() {
               {portfolioPrices && totalPortfolioUsd === null && !portfolioPriceError && (
                 <span className="muted">At least one balance or price is unavailable; the total is intentionally omitted.</span>
               )}
-            </div>
-          )}
+          </div>
           <section className="portfolio-assets" aria-label="Token balances">
             <div className="section-heading">
               <div><p className="eyebrow">SELF-CUSTODY</p><h3>Token balances</h3></div>
@@ -381,6 +388,11 @@ export function WalletPanel() {
                     <div>
                       <strong>{token.amount} {token.asset}</strong>
                       <span className="muted">{token.tokenAddress}</span>
+                      <span className="muted">
+                        {tokenUsdValue(token.tokenAddress, token.amount) === null
+                          ? "USD value unavailable"
+                          : `≈ ${formatUsd(tokenUsdValue(token.tokenAddress, token.amount) ?? 0)}`}
+                      </span>
                     </div>
                   </div>
                 ))}

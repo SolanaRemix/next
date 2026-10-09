@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { EvmPortfolioPricesResponse } from '@next/types';
+import type { PortfolioPricesResponse } from '@next/types';
 
 const requestTimeoutMs = 8_000;
 const maxTokenAddresses = 50;
@@ -30,7 +30,7 @@ export class PortfolioPricesService {
   async getEvmPrices(
     chainId: string,
     tokenAddresses: readonly string[],
-  ): Promise<EvmPortfolioPricesResponse> {
+  ): Promise<PortfolioPricesResponse> {
     const metadata = Object.prototype.hasOwnProperty.call(chainMetadata, chainId)
       ? chainMetadata[chainId]
       : undefined;
@@ -79,6 +79,58 @@ export class PortfolioPricesService {
     return {
       chainId,
       nativePriceUsd,
+      tokenPrices,
+      source: 'CoinGecko',
+      asOf: new Date().toISOString(),
+    };
+  }
+
+  async getSolanaPrices(
+    chainId: string,
+    tokenMints: readonly string[],
+  ): Promise<PortfolioPricesResponse> {
+    if (chainId !== 'mainnet-beta') {
+      throw new ServiceUnavailableException('Pricing is unavailable for this Solana network.');
+    }
+    if (tokenMints.length > maxTokenAddresses ||
+      tokenMints.some((mint) => !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint))) {
+      throw new BadRequestException('Provide at most 50 valid Solana token mints.');
+    }
+    const apiKey = this.config.get<string>('COINGECKO_API_KEY')?.trim();
+    if (!apiKey) throw new ServiceUnavailableException('Portfolio pricing is not configured.');
+
+    const nativeUrl = new URL('https://api.coingecko.com/api/v3/simple/price');
+    nativeUrl.searchParams.set('ids', 'solana');
+    nativeUrl.searchParams.set('vs_currencies', 'usd');
+    const nativeRequest = this.fetchJson(nativeUrl, apiKey);
+    const uniqueMints = [...new Set(tokenMints)];
+    const tokenRequest = uniqueMints.length > 0
+      ? this.fetchJson(this.tokenPricesUrl('solana', uniqueMints), apiKey)
+      : Promise.resolve({} as Record<string, unknown>);
+    const [nativeResult, tokenResult] = await Promise.allSettled([nativeRequest, tokenRequest]);
+    if (
+      nativeResult.status === 'rejected' &&
+      (uniqueMints.length === 0 || tokenResult.status === 'rejected')
+    ) {
+      throw new ServiceUnavailableException('Portfolio price provider is unavailable.');
+    }
+
+    const nativeQuote = nativeResult.status === 'fulfilled' && isRecord(nativeResult.value.solana)
+      ? nativeResult.value.solana
+      : null;
+    const tokenPrices = uniqueMints.map((mint) => {
+      const tokenQuote = tokenResult.status === 'fulfilled'
+        ? tokenResult.value[mint] ?? Object.entries(tokenResult.value)
+          .find(([candidate]) => candidate === mint)?.[1]
+        : null;
+      return {
+        address: mint,
+        priceUsd: isRecord(tokenQuote) ? parseUsdPrice(tokenQuote.usd) : null,
+      };
+    });
+    return {
+      chainId,
+      nativePriceUsd: isRecord(nativeQuote) ? parseUsdPrice(nativeQuote.usd) : null,
       tokenPrices,
       source: 'CoinGecko',
       asOf: new Date().toISOString(),

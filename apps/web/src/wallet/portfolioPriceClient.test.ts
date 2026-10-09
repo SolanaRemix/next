@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchEvmPortfolioPrices } from "./portfolioPriceClient";
+import { fetchEvmPortfolioPrices, fetchSolanaPortfolioPrices } from "./portfolioPriceClient";
 
 const priceResponse = {
   chainId: "0x1",
@@ -38,5 +38,30 @@ describe("fetchEvmPortfolioPrices", () => {
     })));
     await expect(fetchEvmPortfolioPrices("0x1", addresses, "access-token"))
       .rejects.toThrow(/not configured/i);
+  });
+
+  it("validates Solana price responses with case-sensitive mint matching", async () => {
+    const mint = "So11111111111111111111111111111111111111112";
+    const response = {
+      chainId: "mainnet-beta",
+      nativePriceUsd: 150,
+      tokenPrices: [{ address: mint, priceUsd: 150 }],
+      source: "CoinGecko",
+      asOf: "2026-10-09T00:00:00.000Z",
+    };
+    const fetch = vi.fn(async () => Response.json(response));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(fetchSolanaPortfolioPrices("mainnet-beta", [mint], "access-token")).resolves.toEqual(response);
+    const [url, options] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toMatch(/\/portfolio\/solana-prices$/);
+    expect(JSON.parse(String(options.body))).toEqual({ chainId: "mainnet-beta", tokenMints: [mint] });
+
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      ...response,
+      tokenPrices: [{ address: mint.toLowerCase(), priceUsd: 150 }],
+    })));
+    await expect(fetchSolanaPortfolioPrices("mainnet-beta", [mint], "access-token"))
+      .rejects.toThrow(/invalid response/i);
   });
 });

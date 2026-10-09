@@ -199,7 +199,7 @@ export interface EvmPortfolioPricesRequest {
   tokenAddresses: string[];
 }
 
-export interface EvmPortfolioPricesResponse {
+export interface PortfolioPricesResponse {
   chainId: string;
   nativePriceUsd: number | null;
   tokenPrices: Array<{
@@ -209,3 +209,5 @@ export interface EvmPortfolioPricesResponse {
   source: "CoinGecko";
   asOf: string;
 }
+
+export type EvmPortfolioPricesResponse = PortfolioPricesResponse;

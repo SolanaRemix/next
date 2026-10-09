@@ -73,4 +73,48 @@ describe('PortfolioPricesService', () => {
     await expect(service.getEvmPrices('0x1', ['invalid'])).rejects.toBeInstanceOf(BadRequestException);
     await expect(service.getEvmPrices('0x1', Array(51).fill(tokenAddress))).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('prices Solana mainnet assets using case-sensitive token mint addresses', async () => {
+    const mint = 'So11111111111111111111111111111111111111112';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/simple/price')) {
+        expect(url.searchParams.get('ids')).toBe('solana');
+        return Response.json({ solana: { usd: 150 } });
+      }
+      expect(url.pathname).toBe('/api/v3/simple/token_price/solana');
+      expect(url.searchParams.get('contract_addresses')).toBe(mint);
+      return Response.json({ [mint]: { usd: 150 } });
+    }));
+
+    await expect(createService().getSolanaPrices('mainnet-beta', [mint])).resolves.toMatchObject({
+      chainId: 'mainnet-beta',
+      nativePriceUsd: 150,
+      tokenPrices: [{ address: mint, priceUsd: 150 }],
+      source: 'CoinGecko',
+    });
+  });
+
+  it('returns unknown Solana prices as null and rejects invalid networks or mints', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ solana: { usd: 150 } })));
+    await expect(createService().getSolanaPrices('devnet', []))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(createService().getSolanaPrices('mainnet-beta', ['invalid']))
+      .rejects.toBeInstanceOf(BadRequestException);
+    await expect(createService().getSolanaPrices('mainnet-beta', [tokenAddress]))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('returns partial Solana prices when the native-coin lookup fails', async () => {
+    const mint = 'So11111111111111111111111111111111111111112';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/simple/price')) return Response.json({}, { status: 503 });
+      return Response.json({ [mint]: { usd: 150 } });
+    }));
+    await expect(createService().getSolanaPrices('mainnet-beta', [mint])).resolves.toMatchObject({
+      nativePriceUsd: null,
+      tokenPrices: [{ address: mint, priceUsd: 150 }],
+    });
+  });
 });
