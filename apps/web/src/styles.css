@@ -44,6 +44,16 @@ button { color: inherit; }
 .session-row .muted, .session-note { font-size: 0.78rem; }
 .session-revoke { color: var(--negative-red); }
 .session-note { margin-bottom: 0; }
+.financial-controls-panel { margin-bottom: 20px; padding: 20px 24px; }
+.financial-controls-panel h2 { margin: 0; }
+.financial-control-status { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding: 14px 0 4px; }
+.financial-control-status > span:first-child { font-weight: 700; }
+.financial-control-form { display: grid; gap: 12px; max-width: 680px; }
+.financial-control-form > label:first-child { color: var(--text-muted); display: grid; gap: 7px; }
+.financial-control-form textarea { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); padding: 12px; resize: vertical; }
+.financial-control-confirm { align-items: center; color: var(--text-muted); display: flex; gap: 9px; }
+.financial-control-confirm input { accent-color: var(--brand-orange); }
+.financial-control-note { font-size: 0.78rem; margin-bottom: 0; }
 .wallet-panel, .security-card { padding: 25px; }
 .section-heading { align-items: center; display: flex; justify-content: space-between; }
 .section-heading h2, .security-card h2 { font-size: 1.45rem; margin: 0 0 18px; }

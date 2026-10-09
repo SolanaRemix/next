@@ -25,6 +25,11 @@ const SolanaSwapPanel = lazy(() =>
     default: module.SolanaSwapPanel,
   })),
 );
+const FinancialControlsPanel = lazy(() =>
+  import("./admin/FinancialControlsPanel").then((module) => ({
+    default: module.FinancialControlsPanel,
+  })),
+);
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -57,6 +62,11 @@ export function App() {
         <p className="muted">Connect a wallet to inspect native balances and initiate wallet-approved transfers.</p>
       </section>
       <AuthPanel />
+      {user?.role === "SuperAdmin" && accessToken && (
+        <Suspense fallback={<GlassCard className="feature-loading">Loading administrator controls…</GlassCard>}>
+          <FinancialControlsPanel accessToken={accessToken} />
+        </Suspense>
+      )}
       <div className="dashboard-grid">
         <WalletPanel />
         <GlassCard className="security-card">
