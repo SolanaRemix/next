@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountStatus, UserRole } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 
@@ -51,6 +52,7 @@ function createFixture() {
       create: vi.fn().mockResolvedValue({}),
     },
     refreshToken: {
+      findMany: vi.fn(),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     $transaction: vi.fn(async <T>(callback: (tx: typeof transaction) => Promise<T>) =>
@@ -171,6 +173,67 @@ describe('AuthService', () => {
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(transaction.auditLog.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('lists only the user sessions and never returns refresh token hashes', async () => {
+    const { service, transaction } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const current = {
+      id: 'c15c090e-2615-4e52-ad67-f212a4154074',
+      tokenHash: createHash('sha256').update(currentToken).digest('hex'),
+      createdAt: new Date('2026-10-09T00:00:00.000Z'),
+      expiresAt: new Date('2026-11-09T00:00:00.000Z'),
+      revokedAt: null,
+    };
+    prisma.refreshToken.findMany.mockResolvedValue([
+      current,
+      { ...current, id: '3c6164e9-6504-4f61-9a74-728084a9ab38', tokenHash: 'another-hash' },
+    ]);
+
+    const sessions = await service.listSessions(user.id, currentToken);
+
+    expect(sessions).toEqual([
+      expect.objectContaining({ id: current.id, current: true }),
+      expect.objectContaining({ id: '3c6164e9-6504-4f61-9a74-728084a9ab38', current: false }),
+    ]);
+    expect(sessions[0]).not.toHaveProperty('tokenHash');
+    expect(prisma.refreshToken.findMany).toHaveBeenCalledWith({
+      where: { userId: user.id },
+      select: { id: true, tokenHash: true, createdAt: true, expiresAt: true, revokedAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  });
+
+  it('revokes an owned session and audits the action transactionally', async () => {
+    const { service, prisma, transaction } = createFixture();
+    const sessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
+
+    await service.revokeSession(user.id, sessionId);
+
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { id: sessionId, userId: user.id, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.session.revoked',
+        metadata: { sessionId },
+      },
+    });
+  });
+
+  it('does not revoke or disclose a session belonging to another user', async () => {
+    const { service, transaction } = createFixture();
+    transaction.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.revokeSession(user.id, 'c15c090e-2615-4e52-ad67-f212a4154074'))
+      .rejects.toThrow(/Session not found/);
+    expect(transaction.auditLog.create).not.toHaveBeenCalled();
   });
 
   it('assigns roles only through an audited SuperAdmin action', async () => {

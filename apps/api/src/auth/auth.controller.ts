@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -108,6 +109,26 @@ export class AuthController {
       request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
     );
     clearRefreshCookie(response);
+  }
+
+  @Get('sessions')
+  listSessions(
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request,
+  ) {
+    return this.authService.listSessions(
+      user.id,
+      request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
+    );
+  }
+
+  @Delete('sessions/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async revokeSession(
+    @CurrentUser() user: AuthUser,
+    @Param('id', new ParseUUIDPipe()) sessionId: string,
+  ): Promise<void> {
+    await this.authService.revokeSession(user.id, sessionId);
   }
 
   @Get('me')

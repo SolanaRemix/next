@@ -34,6 +34,14 @@ export interface AuthSession {
   user: PublicUser;
 }
 
+export interface RefreshSessionSummary {
+  id: string;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  current: boolean;
+}
+
 function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
@@ -156,6 +164,42 @@ export class AuthService {
         data: { action: 'auth.logout', ...(actorId ? { actorId } : {}) },
       });
     });
+  }
+
+  async listSessions(userId: string, currentRefreshToken: string | undefined): Promise<RefreshSessionSummary[]> {
+    const currentTokenHash = currentRefreshToken && /^[A-Za-z0-9_-]{43}$/.test(currentRefreshToken)
+      ? hashRefreshToken(currentRefreshToken)
+      : null;
+    const sessions = await this.prisma.refreshToken.findMany({
+      where: { userId },
+      select: { id: true, tokenHash: true, createdAt: true, expiresAt: true, revokedAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return sessions.map(({ id, tokenHash, createdAt, expiresAt, revokedAt }) => ({
+      id,
+      createdAt,
+      expiresAt,
+      revokedAt,
+      current: currentTokenHash !== null && tokenHash === currentTokenHash,
+    }));
+  }
+
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      const revoked = await transaction.refreshToken.updateMany({
+        where: { id: sessionId, userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      if (revoked.count !== 1) throw new NotFoundException('Session not found or already revoked.');
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.session.revoked',
+          metadata: { sessionId },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async listUsers(limit: number, cursor?: string): Promise<AdminUser[]> {

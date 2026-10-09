@@ -1,9 +1,102 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useAuth } from "./AuthContext";
+import { fetchSessions, revokeSession } from "./sessionsClient";
+import type { SessionSummary } from "./sessionsClient";
+
+const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:3001/api").replace(/\/+$/, "");
+
+function SessionManager({ accessToken, logout }: { accessToken: string; logout: () => Promise<void> }) {
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadSessions() {
+    setLoading(true);
+    setError(null);
+    try {
+      setSessions(await fetchSessions(apiUrl, accessToken));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to load sessions.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    void fetchSessions(apiUrl, accessToken)
+      .then((result) => { if (active) setSessions(result); })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to load sessions.");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [accessToken]);
+
+  async function revoke(id: string, current: boolean) {
+    setBusySessionId(id);
+    setError(null);
+    try {
+      await revokeSession(apiUrl, accessToken, id);
+      if (current) {
+        await logout();
+        return;
+      }
+      await loadSessions();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to revoke session.");
+    } finally {
+      setBusySessionId(null);
+    }
+  }
+
+  return (
+    <section className="session-manager" aria-labelledby="sessions-heading">
+      <div className="section-heading">
+        <div><p className="eyebrow">ACCOUNT SECURITY</p><h3 id="sessions-heading">Signed-in sessions</h3></div>
+        <button type="button" className="text-button" onClick={() => void loadSessions()} disabled={loading}>Refresh</button>
+      </div>
+      {loading && <p className="muted" role="status">Loading sessions…</p>}
+      {!loading && sessions.length === 0 && <p className="muted">No refresh sessions found.</p>}
+      {sessions.map((session) => {
+        const revoked = session.revokedAt !== null;
+        const expired = Date.parse(session.expiresAt) <= Date.now();
+        const canRevoke = !revoked && !expired;
+        return (
+          <div className="session-row" key={session.id}>
+            <div>
+              <div className="button-row">
+                <strong>{session.current ? "This device" : "Signed-in device"}</strong>
+                <GlowBadge tone={session.current ? "green" : revoked || expired ? "neutral" : "orange"}>
+                  {session.current ? "CURRENT" : revoked ? "REVOKED" : expired ? "EXPIRED" : "ACTIVE"}
+                </GlowBadge>
+              </div>
+              <span className="muted">Signed in {new Date(session.createdAt).toLocaleString()}</span>
+              <span className="muted">Expires {new Date(session.expiresAt).toLocaleString()}</span>
+            </div>
+            {canRevoke && (
+              <button
+                type="button"
+                className="text-button session-revoke"
+                disabled={busySessionId !== null}
+                onClick={() => void revoke(session.id, session.current)}
+              >
+                {busySessionId === session.id ? "Revoking…" : session.current ? "Sign out this device" : "Revoke"}
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {error && <p className="message message--error" role="alert">{error}</p>}
+      <p className="muted session-note">Revoking a session prevents future token refresh. Access already issued to a device may remain valid for up to 15 minutes.</p>
+    </section>
+  );
+}
 
 export function AuthPanel() {
-  const { user, loading, error, login, register, logout, clearError } = useAuth();
+  const { accessToken, user, loading, error, login, register, logout, clearError } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,6 +127,7 @@ export function AuthPanel() {
             <button type="button" className="text-button" onClick={() => void logout()}>Sign out</button>
           </div>
         </div>
+        {accessToken && <SessionManager accessToken={accessToken} logout={logout} />}
       </GlassCard>
     );
   }

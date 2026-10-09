@@ -37,6 +37,13 @@ button { color: inherit; }
 .auth-session > div:first-child { display: grid; gap: 4px; }
 .auth-session .eyebrow { margin: 0; }
 .auth-session strong { overflow-wrap: anywhere; }
+.session-manager { border-top: 1px solid rgba(255, 255, 255, 0.08); margin-top: 18px; padding-top: 18px; }
+.session-manager h3 { font-size: 1rem; margin: 0 0 8px; }
+.session-row { align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.06); display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding: 12px 0; }
+.session-row > div:first-child { display: grid; gap: 5px; min-width: 0; }
+.session-row .muted, .session-note { font-size: 0.78rem; }
+.session-revoke { color: var(--negative-red); }
+.session-note { margin-bottom: 0; }
 .wallet-panel, .security-card { padding: 25px; }
 .section-heading { align-items: center; display: flex; justify-content: space-between; }
 .section-heading h2, .security-card h2 { font-size: 1.45rem; margin: 0 0 18px; }
