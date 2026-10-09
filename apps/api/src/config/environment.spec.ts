@@ -42,18 +42,19 @@ describe('validateEnvironment', () => {
       .toThrow(/REDIS_URL is required/);
     expect(() => validateEnvironment({
       ...validConfig,
+      ...productionRpcConfig,
       NODE_ENV: 'production',
       REDIS_URL: 'https://redis.example.com',
     })).toThrow(/REDIS_URL/);
     expect(() => validateEnvironment({
       ...validConfig,
+      ...productionRpcConfig,
       NODE_ENV: 'production',
       REDIS_URL: 'redis://redis.example.com/1',
     })).toThrow(/REDIS_URL/);
     expect(validateEnvironment({
       ...validConfig,
-      NODE_ENV: 'production',
-      REDIS_URL: 'rediss://redis.example.com:6380',
+      ...productionRpcConfig,
     })).toMatchObject({ REDIS_URL: 'rediss://redis.example.com:6380' });
   });
 
@@ -90,9 +91,9 @@ describe('validateEnvironment', () => {
     })).toMatchObject({ SOLANA_RPC_URL: 'http://localhost:8899' });
     expect(() => validateEnvironment({
       ...validConfig,
+      ...productionRpcConfig,
       NODE_ENV: 'production',
       SOLANA_RPC_URL: 'http://localhost:8899',
-      REDIS_URL: 'rediss://redis.example.com:6380',
     })).toThrow(/SOLANA_RPC_URL/);
     expect(() => validateEnvironment({
       ...validConfig,
@@ -112,8 +113,8 @@ describe('validateEnvironment', () => {
     })).toThrow(/supported EVM chain/);
     expect(() => validateEnvironment({
     ...validConfig,
+    ...productionRpcConfig,
     NODE_ENV: 'production',
-    REDIS_URL: 'rediss://redis.example.com:6380',
     EVM_RPC_URL_1: 'http://localhost:8545',
     })).toThrow(/EVM_RPC_URL_1/);
     expect(() => validateEnvironment({

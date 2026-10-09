@@ -12,6 +12,20 @@ An early monorepo foundation for the requested multi-chain wallet and onboarding
 
 Perpetual and swap panels are lazy-loaded. The Solana Web3 provider is loaded only when a Solana wallet operation is requested, keeping Solana dependencies out of the initial JavaScript bundle.
 
+## Phase 0: hardening and operations
+
+Phase 0 adds a GitHub Actions pipeline that runs typecheck, tests, builds, and `npm audit` for pull requests and pushes to `main`. The API production build uses `apps/api/tsconfig.build.json`, which excludes test files. The health endpoints are exempt from geographic access checks, bootstrap-admin uses serializable isolation, and financial-control changes now use serializable transactions with their audit records.
+
+Production API startup requires PostgreSQL, a 32-byte JWT access secret, Redis database 0, a private Solana RPC, and private RPC endpoints for every supported EVM chain. Set `RPC_PRIVATE_HOSTS` to the comma-separated exact hostnames of those private RPC endpoints. Every configured RPC hostname must be in that allowlist; recognized public RPC hosts are rejected even if listed. Public endpoint detection is necessarily finite, so only use provider endpoints contractually configured for private access. Development can continue to use public RPC endpoints.
+
+The Docker Compose stack builds the web and API images and starts PostgreSQL and a password-protected, single-node Redis Cluster with persistent volumes and healthchecks. The API applies Prisma migrations before serving traffic; readiness waits for both PostgreSQL and Redis. Copy `.env.example` to `.env`, set unique URL-safe passwords and private RPC values, and start the stack with:
+
+```sh
+docker compose up --build
+```
+
+The web app is available at `http://localhost:8080`. Compose requires all seven supported EVM RPC URLs even if a deployment does not expose every chain. The compose file is a single-host deployment baseline; its Redis Cluster has no replica or failover and is not a substitute for managed PostgreSQL/TimescaleDB and a highly available Redis Cluster, backups, TLS termination, secret management, network policy, or multi-replica orchestration.
+
 ## Local development
 
 Requires Node.js 22 or later and npm.
@@ -60,7 +74,7 @@ The Solana wallet uses the mainnet RPC endpoint by default. Set `VITE_SOLANA_RPC
 
 ## Current implementation scope
 
-The API now includes PostgreSQL-backed registration/login, hashed rotating refresh tokens in HttpOnly cookies, short-lived JWT access tokens, role guards, and shared atomic Redis-backed request throttling when `REDIS_URL` is configured. Redis failures fail closed rather than silently switching production instances to independent counters. Development without Redis uses the framework's in-memory limiter. Authenticated swap quote and perpetual risk-check attempts are recorded with actor, outcome, and minimal operational metadata; Solana order and execution requests are also audited. Registration cannot assign privileged roles.
+The API includes PostgreSQL-backed registration/login, hashed rotating refresh tokens in HttpOnly cookies, short-lived JWT access tokens, role guards, and shared atomic Redis-backed request throttling when `REDIS_URL` is configured. Redis failures fail closed rather than silently switching production instances to independent counters. Development without Redis uses the framework's in-memory limiter. Authenticated swap quote and perpetual risk-check attempts are recorded with actor, outcome, and minimal operational metadata; Solana order and execution requests are also audited. Registration cannot assign privileged roles.
 
 Container probes are available at `GET /api/health/live` (process liveness) and `GET /api/health/ready` (PostgreSQL and configured throttle-storage readiness). In development without Redis, readiness checks PostgreSQL and reports ready while the framework's in-memory throttle store is active. Root `npm test` and `npm run typecheck` generate the Prisma client before running.
 

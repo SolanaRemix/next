@@ -1,6 +1,6 @@
 import ipaddr from 'ipaddr.js';
 
-const supportedEvmChainIds = ['1', '10', '56', '137', '8453', '42161', '43114'] as const;
+const supportedEvmChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
 const publicRpcHosts = new Set([
   'api.mainnet-beta.solana.com',
   'api.devnet.solana.com',
