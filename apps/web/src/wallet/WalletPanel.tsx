@@ -3,10 +3,12 @@ import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useWallet } from "./WalletContext";
 import { addEvmTokenToWatchlist, loadEvmTokenWatchlist, removeEvmTokenFromWatchlist } from "./tokenWatchlist";
 import {
+  simulateNativeTransfer,
   readEvmTokenAllowances,
   readEvmTokenAllowance,
   revokeEvmTokenAllowance,
 } from "./providers";
+import type { NativeTransferSimulation } from "./providers";
 import {
   addTrackedAllowance,
   loadTrackedAllowances,
@@ -24,6 +26,7 @@ export function WalletPanel() {
     connect,
     disconnect,
     refreshPortfolio,
+    simulateTransfer,
     transfer,
     clearError,
   } = useWallet();
@@ -36,9 +39,11 @@ export function WalletPanel() {
   const [allowanceTokenAddress, setAllowanceTokenAddress] = useState("");
   const [allowanceSpender, setAllowanceSpender] = useState("");
   const [busyAllowance, setBusyAllowance] = useState<string | null>(null);
+  const [transferSimulation, setTransferSimulation] = useState<NativeTransferSimulation | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    setTransferSimulation(null);
     if (!account) {
       setTrackedTokens([]);
       setTrackedAllowances([]);
@@ -73,10 +78,28 @@ export function WalletPanel() {
     }
   }, [account, refreshPortfolio]);
 
-  async function submitTransfer(event: FormEvent<HTMLFormElement>) {
+  async function reviewTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!account) return;
+    setTransferSimulation(null);
     setNotice(null);
+    try {
+      const simulation = await simulateTransfer({
+        chain: account.chain,
+        to: recipient.trim(),
+        amount: amount.trim(),
+        chainId: account.chainId,
+      });
+      setTransferSimulation(simulation);
+      setNotice("Simulation passed. Review the estimate before continuing to your wallet.");
+    } catch {
+      setTransferSimulation(null);
+      setNotice(null);
+    }
+  }
+
+  async function confirmTransfer() {
+    if (!account || !transferSimulation) return;
     try {
       const receipt = await transfer({
         chain: account.chain,
@@ -87,7 +110,9 @@ export function WalletPanel() {
       setNotice(`Submitted ${receipt.transactionId}`);
       setRecipient("");
       setAmount("");
+      setTransferSimulation(null);
     } catch {
+      setTransferSimulation(null);
       setNotice(null);
     }
   }
@@ -360,11 +385,37 @@ export function WalletPanel() {
               <p className="muted">Revocation is simulated, gas-estimated, and submitted only after approval in your wallet. Use “Forget” only to remove a pair from this browser; it does not revoke on-chain permission.</p>
             </section>
           )}
-          <form className="transfer-form" onSubmit={(event) => void submitTransfer(event)}>
+          <form className="transfer-form" onSubmit={(event) => void reviewTransfer(event)}>
             <h3>Send native asset</h3>
-            <label>Recipient address<input required autoComplete="off" value={recipient} onChange={(event) => setRecipient(event.target.value)} /></label>
-            <label>Amount<input required inputMode="decimal" min="0" step="any" type="number" value={amount} onChange={(event) => setAmount(event.target.value)} /></label>
-            <FlashButton type="submit" disabled={busy}>Review and send</FlashButton>
+            <label>Recipient address<input required autoComplete="off" value={recipient} onChange={(event) => {
+              setRecipient(event.target.value);
+              setTransferSimulation(null);
+              setNotice(null);
+            }} /></label>
+            <label>Amount<input required inputMode="decimal" min="0" step="any" type="number" value={amount} onChange={(event) => {
+              setAmount(event.target.value);
+              setTransferSimulation(null);
+              setNotice(null);
+            }} /></label>
+            <FlashButton type="submit" disabled={busy}>Simulate transfer</FlashButton>
+            {transferSimulation && (
+              <div className="transfer-review" aria-label="Native transfer simulation result">
+                <div className="section-heading">
+                  <h4>Simulation passed</h4>
+                  <GlowBadge tone="green">{transferSimulation.asset}</GlowBadge>
+                </div>
+                <dl>
+                  <div><dt>Recipient</dt><dd>{transferSimulation.recipient}</dd></div>
+                  <div><dt>Amount</dt><dd>{transferSimulation.amount} {transferSimulation.asset}</dd></div>
+                  <div><dt>Estimated network fee</dt><dd>{transferSimulation.estimatedFee} {transferSimulation.asset}</dd></div>
+                  <div><dt>Estimated total debit</dt><dd>{transferSimulation.totalEstimatedDebit} {transferSimulation.asset}</dd></div>
+                </dl>
+                <p className="muted">The transfer is simulated again immediately before opening your wallet. Network fees can change; your wallet is the final authority before signing.</p>
+                <FlashButton type="button" variant="success" disabled={busy} onClick={() => void confirmTransfer()}>
+                  Confirm and send with wallet
+                </FlashButton>
+              </div>
+            )}
           </form>
         </>
       )}

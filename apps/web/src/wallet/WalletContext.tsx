@@ -13,8 +13,10 @@ import {
   disconnectWallet,
   fetchNativeBalance,
   fetchPortfolioBalances,
+  simulateNativeTransfer,
   sendNativeTransfer,
 } from "./providers";
+import type { NativeTransferSimulation } from "./providers";
 
 interface WalletContextValue {
   account: WalletAccount | null;
@@ -26,6 +28,7 @@ interface WalletContextValue {
   disconnect: () => Promise<void>;
   refreshBalance: () => Promise<void>;
   refreshPortfolio: (tokenAddresses?: readonly string[]) => Promise<void>;
+  simulateTransfer: (request: NativeTransferRequest) => Promise<NativeTransferSimulation>;
   transfer: (request: NativeTransferRequest) => Promise<TransferReceipt>;
   clearError: () => void;
 }
@@ -90,6 +93,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return run(() => sendNativeTransfer(account, request));
   }, [account, run]);
 
+  const simulateTransfer = useCallback(async (request: NativeTransferRequest) => {
+    if (!account) throw new Error("Connect a wallet before simulating a transfer.");
+    return run(() => simulateNativeTransfer(account, request));
+  }, [account, run]);
+
   const value = useMemo<WalletContextValue>(() => ({
     account,
     balance,
@@ -100,9 +108,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     disconnect,
     refreshBalance,
     refreshPortfolio,
+    simulateTransfer,
     transfer,
     clearError: () => setError(null),
-  }), [account, balance, tokenBalances, busy, error, connect, disconnect, refreshBalance, refreshPortfolio, transfer]);
+  }), [account, balance, tokenBalances, busy, error, connect, disconnect, refreshBalance, refreshPortfolio, simulateTransfer, transfer]);
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
 }

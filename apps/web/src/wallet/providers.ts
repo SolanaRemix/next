@@ -355,46 +355,107 @@ export async function sendNativeTransfer(
   account: WalletAccount,
   request: NativeTransferRequest,
 ): Promise<TransferReceipt> {
-  if (account.chain !== request.chain) throw new Error("Transfer chain does not match the connected wallet.");
-  if (!Number.isFinite(Number(request.amount)) || Number(request.amount) <= 0) {
-    throw new Error("Enter a valid positive transfer amount.");
-  }
-
+  validateTransferRequest(account, request);
   if (request.chain === "evm") {
-    if (!evmAddressPattern.test(request.to)) throw new Error("Enter a valid destination EVM address.");
-    if (request.chainId && request.chainId !== account.chainId) {
-      throw new Error("The selected chain does not match the connected wallet.");
-    }
     const provider = getEvmProvider();
-    const [activeChainId, activeAccounts] = await Promise.all([
-      provider.request({ method: "eth_chainId" }),
-      provider.request({ method: "eth_accounts" }),
-    ]);
-    if (activeChainId !== account.chainId) throw new Error("Switch your wallet to the connected chain before sending.");
-    if (!Array.isArray(activeAccounts) || !activeAccounts.some(
-      (address) => typeof address === "string" && address.toLowerCase() === account.address.toLowerCase(),
-    )) {
-      throw new Error("The connected account changed. Reconnect your wallet before sending.");
-    }
-    const tx = {
-      from: account.address,
-      to: request.to,
-      value: `0x${parseTokenAmount(request.amount, 18).toString(16)}`,
-    };
-    const gas = await provider.request({ method: "eth_estimateGas", params: [tx] });
-    const gasLimit = parseHexQuantity(gas);
+    const { transaction, gasLimit } = await simulateEvmNativeTransfer(account, request, provider);
+    await assertCurrentEvmWallet(provider, account);
     const transactionId = await provider.request({
       method: "eth_sendTransaction",
-      params: [{ ...tx, gas: `0x${gasLimit.toString(16)}` }],
+      params: [{ ...transaction, gas: `0x${gasLimit.toString(16)}` }],
     });
     if (typeof transactionId !== "string" || !/^0x[0-9a-f]{64}$/i.test(transactionId)) {
       throw new Error("Wallet returned an invalid transaction identifier.");
     }
     return { chain: "evm", transactionId, status: "submitted" };
   }
-
   const solana = await import("./solanaProviders");
   return solana.sendSolanaNativeTransfer(account, request);
+}
+
+export interface NativeTransferSimulation {
+  chain: WalletAccount["chain"];
+  asset: string;
+  recipient: string;
+  amount: string;
+  estimatedFee: string;
+  totalEstimatedDebit: string;
+}
+
+function validateTransferRequest(account: WalletAccount, request: NativeTransferRequest): void {
+  if (account.chain !== request.chain) throw new Error("Transfer chain does not match the connected wallet.");
+  if (request.chainId && request.chainId !== account.chainId) {
+    throw new Error("The selected chain does not match the connected wallet.");
+  }
+  if (request.chain === "evm") {
+    assertEvmAddress(account.address, "connected wallet");
+    assertEvmAddress(request.to, "destination EVM");
+    parseTokenAmount(request.amount, 18);
+    return;
+  }
+  parseTokenAmount(request.amount, 9);
+}
+
+export async function simulateNativeTransfer(
+  account: WalletAccount,
+  request: NativeTransferRequest,
+): Promise<NativeTransferSimulation> {
+  validateTransferRequest(account, request);
+  if (request.chain === "evm") {
+    const provider = getEvmProvider();
+    return (await simulateEvmNativeTransfer(account, request, provider)).simulation;
+  }
+  const solana = await import("./solanaProviders");
+  return solana.simulateSolanaNativeTransfer(account, request);
+}
+
+async function simulateEvmNativeTransfer(
+  account: WalletAccount,
+  request: NativeTransferRequest,
+  provider: Eip1193Provider,
+): Promise<{
+  transaction: { from: string; to: string; value: string };
+  gasLimit: bigint;
+  simulation: NativeTransferSimulation;
+}> {
+  const value = parseTokenAmount(request.amount, 18);
+  await assertCurrentEvmWallet(provider, account);
+  const transaction = {
+    from: account.address,
+    to: request.to,
+    value: `0x${value.toString(16)}`,
+  };
+  const result = await provider.request({ method: "eth_call", params: [transaction, "latest"] });
+  if (typeof result !== "string" || !/^0x(?:[0-9a-f]{2})*$/i.test(result)) {
+    throw new Error("EVM provider returned an invalid transfer simulation result.");
+  }
+  const [gas, gasPriceResult, balanceResult] = await Promise.all([
+    provider.request({ method: "eth_estimateGas", params: [transaction] }),
+    provider.request({ method: "eth_gasPrice" }),
+    provider.request({ method: "eth_getBalance", params: [account.address, "latest"] }),
+  ]);
+  const gasLimit = parseHexQuantity(gas);
+  const gasPrice = parseHexQuantity(gasPriceResult);
+  const balance = parseHexQuantity(balanceResult);
+  const estimatedFee = gasLimit * gasPrice;
+  const totalEstimatedDebit = value + estimatedFee;
+  if (balance < totalEstimatedDebit) {
+    throw new Error("Insufficient native balance for the transfer and estimated network fee.");
+  }
+  await assertCurrentEvmWallet(provider, account);
+  const chainNumber = Number.parseInt(account.chainId, 16);
+  return {
+    transaction,
+    gasLimit,
+    simulation: {
+      chain: "evm",
+      asset: nativeAssetSymbols[chainNumber] ?? "NATIVE",
+      recipient: request.to,
+      amount: formatUnits(value, 18),
+      estimatedFee: formatUnits(estimatedFee, 18),
+      totalEstimatedDebit: formatUnits(totalEstimatedDebit, 18),
+    },
+  };
 }
 
 export async function executeEvmSwap(

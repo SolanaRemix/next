@@ -7,6 +7,7 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import type { NativeTransferRequest, TransferReceipt, WalletAccount, WalletBalance } from "@next/types";
+import type { NativeTransferSimulation } from "./providers";
 import { parseTokenAmount } from "./providers";
 
 interface SolanaWalletProvider {
@@ -167,29 +168,95 @@ export async function sendSolanaNativeTransfer(
   account: WalletAccount,
   request: NativeTransferRequest,
 ): Promise<TransferReceipt> {
-  let destination: PublicKey;
-  try {
-    destination = new PublicKey(request.to);
-  } catch {
-    throw new Error("Enter a valid destination Solana address.");
+  const { provider, transaction } = await prepareSolanaNativeTransfer(account, request);
+  if (provider.publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before sending.");
   }
-  const provider = getSolanaProvider();
-  const connection = getConnection();
-  const transaction = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: new PublicKey(account.address),
-      toPubkey: destination,
-      lamports: parseTokenAmount(request.amount, 9),
-    }),
-  );
-  transaction.feePayer = new PublicKey(account.address);
-  transaction.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
   const result = await provider.signAndSendTransaction(transaction);
   const transactionId = typeof result === "string" ? result : result.signature;
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(transactionId)) {
     throw new Error("Wallet returned an invalid Solana transaction identifier.");
   }
   return { chain: "solana", transactionId, status: "submitted" };
+}
+
+export async function simulateSolanaNativeTransfer(
+  account: WalletAccount,
+  request: NativeTransferRequest,
+): Promise<NativeTransferSimulation> {
+  const { simulation } = await prepareSolanaNativeTransfer(account, request);
+  return simulation;
+}
+
+async function prepareSolanaNativeTransfer(
+  account: WalletAccount,
+  request: NativeTransferRequest,
+): Promise<{
+  provider: SolanaWalletProvider;
+  transaction: Transaction;
+  simulation: NativeTransferSimulation;
+}> {
+  if (account.chain !== "solana" || request.chain !== "solana") {
+    throw new Error("Connect a Solana wallet to simulate this transfer.");
+  }
+  if (request.chainId && request.chainId !== account.chainId) {
+    throw new Error("The selected chain does not match the connected wallet.");
+  }
+  const lamports = parseTokenAmount(request.amount, 9);
+  let owner: PublicKey;
+  let destination: PublicKey;
+  try {
+    owner = new PublicKey(account.address);
+    destination = new PublicKey(request.to);
+  } catch {
+    throw new Error("Enter valid source and destination Solana addresses.");
+  }
+  const provider = getSolanaProvider();
+  if (provider.publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before simulating.");
+  }
+  const connection = getConnection();
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  const transaction = new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: owner, toPubkey: destination, lamports }),
+  );
+  transaction.feePayer = owner;
+  transaction.recentBlockhash = blockhash;
+  const simulationResult = await connection.simulateTransaction(transaction, {
+    sigVerify: false,
+    replaceRecentBlockhash: true,
+    commitment: "confirmed",
+  });
+  if (simulationResult.value.err !== null) {
+    throw new Error("Solana RPC simulation rejected the transfer. No wallet transaction was requested.");
+  }
+  const [feeResult, balance] = await Promise.all([
+    connection.getFeeForMessage(transaction.compileMessage(), "confirmed"),
+    connection.getBalance(owner, "confirmed"),
+  ]);
+  const fee = feeResult.value;
+  if (fee === null || !Number.isSafeInteger(fee) || fee < 0 || !Number.isSafeInteger(balance) || balance < 0) {
+    throw new Error("Solana RPC returned invalid transfer fee or balance data.");
+  }
+  const totalDebit = lamports + BigInt(fee);
+  if (BigInt(balance) < totalDebit) {
+    throw new Error("Insufficient SOL balance for the transfer and estimated network fee.");
+  }
+  if (provider.publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before continuing.");
+  }
+  return {
+    provider,
+    transaction,
+    simulation: {
+      chain: "solana",
+      asset: "SOL",
+      recipient: request.to,
+      amount: formatTokenUnits(lamports, 9),
+      estimatedFee: formatTokenUnits(BigInt(fee), 9),
+      totalEstimatedDebit: formatTokenUnits(totalDebit, 9),
+    },
+  };
 }
 
 export async function signSolanaVersionedTransaction(
