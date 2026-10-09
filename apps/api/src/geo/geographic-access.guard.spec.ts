@@ -2,17 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
 import { GeographicAccessGuard } from './geographic-access.guard.js';
 
-function createGuard(blockedCountries = 'US', trustedCidrs = '192.0.2.0/24') {
+function createGuard(blockedCountries = 'US', trustedCidrs = '192.0.2.0/24', bypass = false) {
   return new GeographicAccessGuard({
     get: (key: string) => ({
       GEO_BLOCKED_COUNTRIES: blockedCountries,
       GEO_TRUSTED_PROXY_CIDRS: trustedCidrs,
     })[key],
+  } as never, {
+    getAllAndOverride: () => bypass,
   } as never);
 }
 
 function context(remoteAddress: string, country?: string) {
   return {
+    getHandler: () => undefined,
+    getClass: () => undefined,
     switchToHttp: () => ({
       getRequest: () => ({
         socket: { remoteAddress },
@@ -23,6 +27,11 @@ function context(remoteAddress: string, country?: string) {
 }
 
 describe('GeographicAccessGuard', () => {
+  it('allows explicitly bypassed health probes without country headers', () => {
+    expect(() => createGuard().canActivate(context('203.0.113.25'))).toThrow(ForbiddenException);
+    expect(createGuard('US', '192.0.2.0/24', true).canActivate(context('203.0.113.25'))).toBe(true);
+  });
+
   it('blocks a configured country reported by a trusted proxy', () => {
     expect(() => createGuard().canActivate(context('192.0.2.25', 'us')))
       .toThrow(ForbiddenException);

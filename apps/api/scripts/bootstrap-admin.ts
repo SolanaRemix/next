@@ -11,7 +11,7 @@ try {
   await prisma.$transaction(async (transaction) => {
     const administrators = await transaction.user.count({
       where: { role: UserRole.SuperAdmin, deletedAt: null },
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    });
     if (administrators > 0) {
       throw new Error('A SuperAdmin already exists; bootstrap is disabled.');
     }
@@ -23,7 +23,7 @@ try {
     await transaction.auditLog.create({
       data: { actorId: user.id, action: 'auth.bootstrap_super_admin' },
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   console.info('Initial SuperAdmin role assigned.');
 } finally {
   await prisma.$disconnect();

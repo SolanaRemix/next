@@ -17,6 +17,15 @@ declare global {
 }
 
 const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
+const nativeAssetSymbols: Record<number, string> = {
+  1: "ETH",
+  10: "ETH",
+  56: "BNB",
+  137: "POL",
+  8453: "ETH",
+  42161: "ETH",
+  43114: "AVAX",
+};
 
 export function parseTokenAmount(amount: string, decimals: number): bigint {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
@@ -86,6 +95,7 @@ export async function fetchNativeBalance(account: WalletAccount): Promise<Wallet
     const provider = getEvmProvider();
     const chainId = await provider.request({ method: "eth_chainId" });
     if (chainId !== account.chainId) throw new Error("Switch your wallet to the connected chain before refreshing.");
+    const chainNumber = Number.parseInt(account.chainId, 16);
     const value = await provider.request({
       method: "eth_getBalance",
       params: [account.address, "latest"],
@@ -93,7 +103,7 @@ export async function fetchNativeBalance(account: WalletAccount): Promise<Wallet
     return {
       address: account.address,
       chain: account.chain,
-      asset: "ETH",
+      asset: nativeAssetSymbols[chainNumber] ?? "NATIVE",
       amount: formatUnits(parseHexQuantity(value), 18),
       decimals: 18,
     };

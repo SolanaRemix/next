@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectEvmWallet, executeEvmSwap, parseTokenAmount } from "./providers";
+import { connectEvmWallet, executeEvmSwap, fetchNativeBalance, parseTokenAmount } from "./providers";
 import type { EvmSwapOrderResponse, WalletAccount } from "@next/types";
 
 const { onSolanaModuleLoad } = vi.hoisted(() => ({ onSolanaModuleLoad: vi.fn() }));
@@ -126,5 +126,32 @@ describe("parseTokenAmount", () => {
 
     await expect(executeEvmSwap(account, order, vi.fn())).rejects.toThrow(/invalid transaction details/i);
     expect(request).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchNativeBalance", () => {
+  it.each([
+    ["0x1", "ETH"],
+    ["0xa", "ETH"],
+    ["0x38", "BNB"],
+    ["0x89", "POL"],
+    ["0x2105", "ETH"],
+    ["0xa4b1", "ETH"],
+    ["0xa86a", "AVAX"],
+    ["0x999", "NATIVE"],
+  ])("labels chain %s with its native asset %s", async (chainId, asset) => {
+    window.ethereum = {
+      request: vi.fn(async ({ method }) =>
+        method === "eth_chainId" ? chainId : "0xde0b6b3a7640000"),
+    };
+    const balance = await fetchNativeBalance({
+      address: "0x1111111111111111111111111111111111111111",
+      chain: "evm",
+      chainId,
+      connectedAt: new Date().toISOString(),
+    });
+
+    expect(balance.asset).toBe(asset);
+    expect(balance.amount).toBe("1");
   });
 });

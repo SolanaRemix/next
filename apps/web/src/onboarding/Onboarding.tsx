@@ -50,7 +50,7 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
     void (store?.load() ?? Promise.resolve(null))
       .catch(() => null)
       .then((progress) => {
-        if (active && progress && (progress.completed || progress.skipped)) setStep(4);
+        if (active && progress) setStep(progress.completed || progress.skipped ? 4 : progress.step);
         setReady(active);
       });
     return () => { active = false; };

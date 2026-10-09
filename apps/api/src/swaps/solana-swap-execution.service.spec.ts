@@ -37,11 +37,18 @@ const providerOrder = {
 };
 
 function createPrismaMock() {
+  const create = vi.fn(async (args: { data: { id: string } }) => ({ id: args.data.id }));
+  const transaction = {
+    $queryRaw: vi.fn(async () => [{ enabled: true }]),
+    solanaSwapOrder: { create },
+  };
   return {
+    $transaction: vi.fn(async (operation: (client: typeof transaction) => unknown) =>
+      operation(transaction)),
+    transaction,
     solanaSwapOrder: {
       findUnique: vi.fn(),
       findFirst: vi.fn(),
-      create: vi.fn(async (args: { data: { id: string } }) => ({ id: args.data.id })),
       update: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -89,7 +96,8 @@ describe('SolanaSwapExecutionService', () => {
       minimumOutputAmount: '2475000',
     });
     expect(result.executionId).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(prisma.solanaSwapOrder.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prisma.transaction.$queryRaw).toHaveBeenCalledOnce();
+    expect(prisma.transaction.solanaSwapOrder.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         id: result.executionId,
         userId: 'user-1',
@@ -97,6 +105,14 @@ describe('SolanaSwapExecutionService', () => {
         taker,
       }),
     }));
+  });
+
+  it('does not persist an order when the execution control is disabled at admission', async () => {
+    prisma.transaction.$queryRaw.mockResolvedValueOnce([]);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(providerOrder)));
+
+    await expect(service.order('user-1', request)).rejects.toThrow(/execution is disabled/i);
+    expect(prisma.transaction.solanaSwapOrder.create).not.toHaveBeenCalled();
   });
 
   it('blocks order creation while the global execution control is disabled', async () => {
@@ -146,7 +162,7 @@ describe('SolanaSwapExecutionService', () => {
     })));
 
     await expect(service.order('user-1', request)).rejects.toThrow(/invalid or non-executable/);
-    expect(prisma.solanaSwapOrder.create).not.toHaveBeenCalled();
+    expect(prisma.transaction.solanaSwapOrder.create).not.toHaveBeenCalled();
   });
 
   it('submits a signed order once and stores Jupiter execution status', async () => {

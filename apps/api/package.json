@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "prisma generate && tsc -b",
+    "build": "prisma generate && tsc -b tsconfig.build.json",
     "start": "node dist/main.js",
     "start:dev": "prisma generate && tsx watch src/main.ts",
     "bootstrap:admin": "node --env-file=.env --import tsx scripts/bootstrap-admin.ts",

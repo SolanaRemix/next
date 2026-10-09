@@ -261,19 +261,32 @@ export class SolanaSwapExecutionService {
       expiresAt: expiresAt.toISOString(),
     };
     try {
-      const created = await this.prisma.solanaSwapOrder.create({
-        data: {
-          id: response.executionId,
-          userId,
-          idempotencyKey: request.idempotencyKey,
-          requestId: order.requestId,
-          taker: request.taker,
-          inputMint: request.inputMint,
-          outputMint: request.outputMint,
-          inputAmount: request.amount,
-          orderPayload: response as unknown as Prisma.InputJsonObject,
-          expiresAt,
-        },
+      const created = await this.prisma.$transaction(async (transaction) => {
+        const control = await transaction.$queryRaw<{ enabled: boolean }[]>`
+          SELECT "enabled"
+          FROM "financial_operations_controls"
+          WHERE "id" = 'global_execution'
+          FOR SHARE
+        `;
+        if (control[0]?.enabled !== true) {
+          throw new ServiceUnavailableException(
+            'Financial execution is disabled by the global control.',
+          );
+        }
+        return transaction.solanaSwapOrder.create({
+          data: {
+            id: response.executionId,
+            userId,
+            idempotencyKey: request.idempotencyKey,
+            requestId: order.requestId,
+            taker: request.taker,
+            inputMint: request.inputMint,
+            outputMint: request.outputMint,
+            inputAmount: request.amount,
+            orderPayload: response as unknown as Prisma.InputJsonObject,
+            expiresAt,
+          },
+        });
       });
       return { ...response, executionId: created.id };
     } catch (error) {

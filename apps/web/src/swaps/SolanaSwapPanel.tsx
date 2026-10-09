@@ -160,8 +160,16 @@ export function SolanaSwapPanel({
           <p className="eyebrow">SOLANA · JUPITER SWAP V2</p>
           <h2>On-chain token swap</h2>
         </div>
-        <GlowBadge tone={result?.status === "success" ? "green" : "orange"}>
-          {result?.status === "success" ? "SUBMITTED" : "WALLET-SIGNED"}
+        <GlowBadge tone={result?.status === "success" ? "green" : "neutral"}>
+          {result?.status === "success"
+            ? "SUBMITTED"
+            : result?.status === "processing"
+              ? "PROCESSING"
+              : result?.status === "failed"
+                ? "FAILED"
+                : order
+                  ? "ORDER READY"
+                  : "READY"}
         </GlowBadge>
       </div>
       {!walletReady && (
