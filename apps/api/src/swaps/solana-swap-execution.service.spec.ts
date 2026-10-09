@@ -203,4 +203,30 @@ describe('SolanaSwapExecutionService', () => {
       data: expect.objectContaining({ executionStatus: 'SUCCEEDED' }),
     }));
   });
+
+  it('does not persist a failure from an unconfirmed fork', async () => {
+    prisma.solanaSwapOrder.findFirst.mockResolvedValue({
+      id: executionId,
+      userId: 'user-1',
+      executionStatus: 'EXECUTING',
+      executionResult: null,
+      transactionSignature: '1'.repeat(32),
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      result: {
+        value: [{
+          err: { InstructionError: [0, 'Custom'] },
+          confirmationStatus: 'processed',
+          confirmations: 1,
+        }],
+      },
+    })));
+
+    await expect(service.status('user-1', executionId)).resolves.toEqual({
+      status: 'processing',
+      signature: '1'.repeat(32),
+      error: null,
+    });
+    expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
+  });
 });

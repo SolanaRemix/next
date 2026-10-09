@@ -437,7 +437,7 @@ export class SolanaSwapExecutionService {
     const confirmed = status.confirmationStatus === 'confirmed' ||
       status.confirmationStatus === 'finalized' ||
       status.confirmations === null;
-    if (!hasError && !confirmed) {
+    if (!confirmed) {
       return { status: 'processing', signature: row.transactionSignature, error: null };
     }
     const result: SolanaSwapExecuteResponse = {
