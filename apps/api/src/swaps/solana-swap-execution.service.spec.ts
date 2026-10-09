@@ -197,7 +197,7 @@ describe('SolanaSwapExecutionService', () => {
     }));
   });
 
-  it('blocks signed transaction submission when the global control is disabled', async () => {
+  it('does not roll back a newer execution attempt when the global control is disabled', async () => {
     prisma.solanaSwapOrder.findFirst.mockResolvedValue({
       id: executionId,
       requestId,
@@ -213,7 +213,7 @@ describe('SolanaSwapExecutionService', () => {
       .mockRejectedValueOnce(new Error('disabled'));
     prisma.solanaSwapOrder.updateMany
       .mockResolvedValueOnce({ count: 1 })
-      .mockResolvedValueOnce({ count: 1 });
+      .mockResolvedValueOnce({ count: 0 });
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
 
@@ -225,6 +225,14 @@ describe('SolanaSwapExecutionService', () => {
     })).rejects.toThrow('disabled');
     expect(fetch).not.toHaveBeenCalled();
     expect(prisma.solanaSwapOrder.updateMany).toHaveBeenCalledTimes(2);
+    const claim = prisma.solanaSwapOrder.updateMany.mock.calls[0]?.[0];
+    const rollback = prisma.solanaSwapOrder.updateMany.mock.calls[1]?.[0];
+    const newerAttemptId = 'b46cd8b7-d54a-4620-867a-40d67da43c5d';
+    expect(claim?.data.executionAttemptId).not.toBe(newerAttemptId);
+    expect(rollback?.where).toEqual(expect.objectContaining({
+      executionAttemptId: claim?.data.executionAttemptId,
+    }));
+    expect(rollback?.where.executionAttemptId).not.toBe(newerAttemptId);
     expect(prisma.solanaSwapOrder.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         executionStatus: 'ORDERED',
