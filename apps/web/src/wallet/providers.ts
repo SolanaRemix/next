@@ -141,3 +141,14 @@ export async function sendNativeTransfer(
   const solana = await import("./solanaProviders");
   return solana.sendSolanaNativeTransfer(account, request);
 }
+
+export async function signSolanaSwapTransaction(
+  account: WalletAccount,
+  encodedTransaction: string,
+): Promise<string> {
+  if (account.chain !== "solana") {
+    throw new Error("Connect a Solana wallet before signing a Solana swap.");
+  }
+  const solana = await import("./solanaProviders");
+  return solana.signSolanaVersionedTransaction(account, encodedTransaction);
+}

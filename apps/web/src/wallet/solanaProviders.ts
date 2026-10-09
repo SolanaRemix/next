@@ -4,6 +4,7 @@ import {
   PublicKey,
   SystemProgram,
   Transaction,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import type { NativeTransferRequest, TransferReceipt, WalletAccount, WalletBalance } from "@next/types";
 import { parseTokenAmount } from "./providers";
@@ -13,6 +14,7 @@ interface SolanaWalletProvider {
   connect(): Promise<{ publicKey?: { toBase58(): string } } | void>;
   disconnect(): Promise<void>;
   signAndSendTransaction(transaction: Transaction): Promise<string | { signature: string }>;
+  signTransaction?(transaction: VersionedTransaction): Promise<VersionedTransaction>;
 }
 
 declare global {
@@ -90,4 +92,64 @@ export async function sendSolanaNativeTransfer(
     throw new Error("Wallet returned an invalid Solana transaction identifier.");
   }
   return { chain: "solana", transactionId, status: "submitted" };
+}
+
+export async function signSolanaVersionedTransaction(
+  account: WalletAccount,
+  encodedTransaction: string,
+): Promise<string> {
+  const provider = getSolanaProvider();
+  const connectedAddress = provider.publicKey?.toBase58();
+  if (!connectedAddress || connectedAddress !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before signing.");
+  }
+  if (!provider.signTransaction) {
+    throw new Error("This wallet does not support signing versioned Solana transactions.");
+  }
+
+  let serialized: Uint8Array;
+  try {
+    const binary = atob(encodedTransaction);
+    serialized = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw new Error("Swap provider returned an invalid transaction.");
+  }
+  if (serialized.length === 0 || serialized.length > 1232) {
+    throw new Error("Swap transaction exceeds the Solana packet size limit.");
+  }
+  const transaction = VersionedTransaction.deserialize(serialized);
+  const originalMessage = transaction.message.serialize();
+  const signed = await provider.signTransaction(transaction);
+  const currentAddress = provider.publicKey?.toBase58();
+  if (currentAddress !== account.address) {
+    throw new Error("The connected Solana account changed while signing.");
+  }
+  const signedMessage = signed.message.serialize();
+  if (
+    originalMessage.length !== signedMessage.length ||
+    originalMessage.some((byte, index) => byte !== signedMessage[index])
+  ) {
+    throw new Error("Wallet changed the quoted swap transaction. Request a fresh order.");
+  }
+  const signerIndex = signed.message.staticAccountKeys.findIndex(
+    (key) => key.toBase58() === account.address,
+  );
+  const takerSignature = signed.signatures[signerIndex];
+  if (
+    signerIndex < 0 ||
+    signerIndex >= signed.message.header.numRequiredSignatures ||
+    !takerSignature ||
+    takerSignature.every((byte) => byte === 0)
+  ) {
+    throw new Error("Wallet did not provide the required taker signature.");
+  }
+  const signedBytes = signed.serialize();
+  if (signedBytes.length > 1232) {
+    throw new Error("Signed swap transaction exceeds the Solana packet size limit.");
+  }
+  let binary = "";
+  for (let offset = 0; offset < signedBytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...signedBytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
 }
