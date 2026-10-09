@@ -10,6 +10,8 @@ An early monorepo foundation for the requested multi-chain wallet and onboarding
 - `packages/ui` — glassmorphism cards, flash buttons, badges, and theme styles
 - `packages/config` — shared theme tokens
 
+Perpetual and swap panels are lazy-loaded. The Solana Web3 provider is loaded only when a Solana wallet operation is requested, keeping Solana dependencies out of the initial JavaScript bundle.
+
 ## Local development
 
 Requires Node.js 22 or later and npm.

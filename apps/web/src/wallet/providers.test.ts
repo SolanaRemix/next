@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { parseTokenAmount } from "./providers";
+import { describe, expect, it, vi } from "vitest";
+import { connectEvmWallet, parseTokenAmount } from "./providers";
+
+const { onSolanaModuleLoad } = vi.hoisted(() => ({ onSolanaModuleLoad: vi.fn() }));
+
+vi.mock("./solanaProviders", () => {
+  onSolanaModuleLoad();
+  return {};
+});
 
 describe("parseTokenAmount", () => {
   it("converts decimal token units without floating point arithmetic", () => {
@@ -11,5 +18,13 @@ describe("parseTokenAmount", () => {
     for (const value of ["0", "-1", "1e-3", "1.0000000001"]) {
       expect(() => parseTokenAmount(value, 9)).toThrow();
     }
+  });
+
+  it("does not load Solana Web3 when connecting an EVM wallet", async () => {
+    const previousProvider = window.ethereum;
+    delete window.ethereum;
+    await expect(connectEvmWallet()).rejects.toThrow(/No EVM wallet detected/);
+    expect(onSolanaModuleLoad).not.toHaveBeenCalled();
+    if (previousProvider) window.ethereum = previousProvider;
   });
 });
