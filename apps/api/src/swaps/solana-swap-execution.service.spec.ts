@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { SolanaSwapExecutionService } from './solana-swap-execution.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 
@@ -175,6 +176,9 @@ describe('SolanaSwapExecutionService', () => {
       data: expect.objectContaining({
         executionStatus: 'EXECUTING',
         transactionSignature: expect.stringMatching(/^[1-9A-HJ-NP-Za-km-z]{32,88}$/),
+        signedTransactionHash: createHash('sha256')
+          .update(Buffer.from(encodedTransaction, 'base64'))
+          .digest('hex'),
       }),
     }));
   });
@@ -227,6 +231,34 @@ describe('SolanaSwapExecutionService', () => {
       signature: '1'.repeat(32),
       error: null,
     });
+    expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a different signed transaction when retrying a claimed order', async () => {
+    prisma.solanaSwapOrder.findFirst.mockResolvedValue({
+      id: executionId,
+      requestId,
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 30_000),
+      executionStatus: 'EXECUTING',
+      executionKey: idempotencyKey,
+      executionResult: null,
+      transactionSignature: null,
+      signedTransactionHash: createHash('sha256')
+        .update(Buffer.from(encodedTransaction, 'base64'))
+        .digest('hex'),
+      updatedAt: new Date(),
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(service.execute('user-1', {
+      executionId,
+      requestId,
+      signedTransaction: Buffer.from([1, ...new Array<number>(64).fill(2), 7]).toString('base64'),
+      idempotencyKey,
+    })).rejects.toThrow(/original signed transaction/);
+    expect(fetch).not.toHaveBeenCalled();
     expect(prisma.solanaSwapOrder.updateMany).not.toHaveBeenCalled();
   });
 });

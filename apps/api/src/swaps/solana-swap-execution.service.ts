@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   SolanaSwapExecuteRequest,
   SolanaSwapExecuteResponse,
@@ -316,6 +316,13 @@ export class SolanaSwapExecutionService {
     ) {
       throw new ConflictException('Signed transaction is invalid or exceeds the Solana size limit.');
     }
+    const signedTransactionHash = createHash('sha256').update(decodedTransaction).digest('hex');
+    if (
+      row.executionStatus === 'EXECUTING' &&
+      row.signedTransactionHash !== signedTransactionHash
+    ) {
+      throw new ConflictException('Retry must use the original signed transaction.');
+    }
     const canRetryInFlight = row.executionStatus === 'EXECUTING' &&
       Date.now() - row.updatedAt.getTime() >= executionRetryWaitMs;
     if (row.executionStatus === 'EXECUTING' && !canRetryInFlight) {
@@ -337,6 +344,7 @@ export class SolanaSwapExecutionService {
           executionStatus: 'EXECUTING',
           executionKey: request.idempotencyKey,
           transactionSignature: transactionSignature(decodedTransaction),
+          signedTransactionHash,
         },
       });
       claimCount = claim.count;
@@ -356,6 +364,9 @@ export class SolanaSwapExecutionService {
           { status: 'processing', signature: null, error: null };
       }
       if (latest?.executionKey === request.idempotencyKey) {
+        if (latest.signedTransactionHash !== signedTransactionHash) {
+          throw new ConflictException('Retry must use the original signed transaction.');
+        }
         return { status: 'processing', signature: latest.transactionSignature, error: null };
       }
       throw new ConflictException('This swap order has already been submitted.');
