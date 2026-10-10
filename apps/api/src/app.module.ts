@@ -16,6 +16,7 @@ import { SolanaMarketModule } from './solana-market/solana-market.module.js';
 import { FinancialControlsModule } from './financial-controls/financial-controls.module.js';
 import { HealthModule } from './health/health.module.js';
 import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.module.js';
+import { AuditModule } from './audit/audit.module.js';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.modul
     HealthModule,
     PortfolioPricesModule,
     SwapsModule,
+    AuditModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -35,6 +35,11 @@ const UserManagementPanel = lazy(() =>
     default: module.UserManagementPanel,
   })),
 );
+const AuditLogPanel = lazy(() =>
+  import("./admin/AuditLogPanel").then((module) => ({
+    default: module.AuditLogPanel,
+  })),
+);
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -74,6 +79,9 @@ export function App() {
           </Suspense>
           <Suspense fallback={<GlassCard className="feature-loading">Loading user management…</GlassCard>}>
             <UserManagementPanel accessToken={accessToken} />
+          </Suspense>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading audit log…</GlassCard>}>
+            <AuditLogPanel accessToken={accessToken} />
           </Suspense>
         </>
       )}

@@ -70,6 +70,20 @@ button { color: inherit; }
 .admin-user-confirm input { accent-color: var(--brand-orange); }
 .admin-users-more { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 14px; }
 .admin-users-note { margin-bottom: 0; }
+.audit-log-panel { margin-bottom: 20px; padding: 20px 24px; }
+.audit-log-panel h2 { margin: 0; }
+.audit-filter-form { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0; }
+.audit-filter-form label { color: var(--text-muted); display: grid; flex: 1 1 230px; font-size: 0.84rem; gap: 6px; max-width: 380px; }
+.audit-filter-form input { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); min-height: 42px; padding: 0 10px; }
+.audit-entry { border-top: 1px solid rgba(255, 255, 255, 0.08); display: grid; gap: 8px; padding: 14px 0; }
+.audit-entry-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; }
+.audit-entry-heading > div { display: grid; gap: 4px; min-width: 0; }
+.audit-entry-heading strong { overflow-wrap: anywhere; }
+.audit-entry-heading .muted, .audit-actor, .audit-log-note { font-size: 0.78rem; }
+.audit-entry details summary { color: var(--text-muted); cursor: pointer; font-size: 0.82rem; }
+.audit-entry pre { background: rgba(4, 7, 9, 0.5); border-radius: 8px; font-size: 0.76rem; margin: 8px 0 0; max-height: 280px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.audit-load-more { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px; }
+.audit-log-note { margin-bottom: 0; }
 .wallet-panel, .security-card { padding: 25px; }
 .section-heading { align-items: center; display: flex; justify-content: space-between; }
 .section-heading h2, .security-card h2 { font-size: 1.45rem; margin: 0 0 18px; }
