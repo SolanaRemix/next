@@ -49,7 +49,11 @@ describe('validateEnvironment', () => {
     })).toThrow(/without credentials or query data/i);
     expect(() => validateEnvironment({
       ...validConfig,
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example?token=secret',
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example?attribute=value',
+    })).toThrow(/without credentials or query data/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://user@collector.example',
     })).toThrow(/without credentials or query data/i);
     expect(() => validateEnvironment({
       ...validConfig,
