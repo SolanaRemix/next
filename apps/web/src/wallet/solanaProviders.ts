@@ -16,6 +16,9 @@ interface SolanaWalletProvider {
   publicKey?: { toBase58(): string } | null;
   connect(): Promise<{ publicKey?: { toBase58(): string } } | void>;
   disconnect(): Promise<void>;
+  on?(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+  off?(event: string, listener: (...args: unknown[]) => void): unknown;
   signAndSendTransaction(transaction: Transaction): Promise<string | { signature: string }>;
   signTransaction?(transaction: VersionedTransaction): Promise<VersionedTransaction>;
 }
@@ -102,6 +105,63 @@ export async function connectSolanaWallet(): Promise<WalletAccount> {
 
 export async function disconnectSolanaWallet(): Promise<void> {
   await getSolanaProvider().disconnect();
+}
+
+export function subscribeSolanaAccountChanges(
+  onChange: (account: WalletAccount | null) => void,
+): () => void {
+  const provider = getSolanaProvider();
+  const removeListener = provider.removeListener ?? provider.off;
+  if (!provider.on || !removeListener) return () => undefined;
+
+  let active = true;
+  const accountChanged = (value: unknown) => {
+    if (!active) return;
+    try {
+      const candidate = value === undefined ? provider.publicKey : value;
+      if (candidate === null) {
+        onChange(null);
+        return;
+      }
+      const address = typeof candidate === "string"
+        ? candidate
+        : typeof candidate === "object" && candidate !== null
+          && "toBase58" in candidate && typeof candidate.toBase58 === "function"
+          ? candidate.toBase58()
+          : null;
+      if (!address) {
+        onChange(null);
+        return;
+      }
+      const publicKey = new PublicKey(address);
+      onChange({
+        address: publicKey.toBase58(),
+        chain: "solana",
+        chainId: "mainnet-beta",
+        connectedAt: new Date().toISOString(),
+      });
+    } catch {
+      onChange(null);
+    }
+  };
+  const disconnected = () => {
+    if (active) onChange(null);
+  };
+  try {
+    provider.on("accountChanged", accountChanged);
+    provider.on("disconnect", disconnected);
+  } catch (cause) {
+    active = false;
+    removeListener.call(provider, "accountChanged", accountChanged);
+    removeListener.call(provider, "disconnect", disconnected);
+    throw cause;
+  }
+  return () => {
+    if (!active) return;
+    active = false;
+    removeListener.call(provider, "accountChanged", accountChanged);
+    removeListener.call(provider, "disconnect", disconnected);
+  };
 }
 
 export async function fetchSolanaNativeBalance(account: WalletAccount): Promise<WalletBalance> {

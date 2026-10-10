@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -13,6 +14,7 @@ import {
   disconnectWallet,
   fetchNativeBalance,
   fetchPortfolioBalances,
+  subscribeWalletAccountChanges,
   simulateNativeTransfer,
   sendNativeTransfer,
 } from "./providers";
@@ -87,6 +89,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setBalance(native);
     setTokenBalances(tokens);
   }, [account, run]);
+
+  useEffect(() => {
+    if (!account) return;
+    let active = true;
+    let unsubscribe: () => void = () => undefined;
+    void subscribeWalletAccountChanges(account.chain, (nextAccount) => {
+      if (!active) return;
+      const sameAccount = nextAccount !== null
+        && nextAccount.chain === account.chain
+        && nextAccount.chainId.toLowerCase() === account.chainId.toLowerCase()
+        && (account.chain === "evm"
+          ? nextAccount.address.toLowerCase() === account.address.toLowerCase()
+          : nextAccount.address === account.address);
+      if (sameAccount) return;
+      setAccount(nextAccount);
+      setBalance(null);
+      setTokenBalances([]);
+      setError(nextAccount
+        ? "Wallet account or network changed. Refresh and review the displayed account before continuing."
+        : "Wallet disconnected or returned an invalid account. Reconnect before continuing.");
+    }).then((stop) => {
+      if (active) unsubscribe = stop;
+      else stop();
+    }).catch((cause: unknown) => {
+      if (!active) return;
+      setAccount(null);
+      setBalance(null);
+      setTokenBalances([]);
+      setError(cause instanceof Error ? cause.message : "Unable to monitor wallet account changes.");
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [account?.address, account?.chain, account?.chainId]);
 
   const transfer = useCallback(async (request: NativeTransferRequest) => {
     if (!account) throw new Error("Connect a wallet before sending a transfer.");

@@ -9,6 +9,7 @@ import {
   revokeEvmTokenAllowance,
   sendNativeTransfer,
   simulateNativeTransfer,
+  subscribeWalletAccountChanges,
 } from "./providers";
 import type { EvmSwapOrderResponse, WalletAccount } from "@next/types";
 
@@ -41,6 +42,48 @@ describe("parseTokenAmount", () => {
     await expect(connectEvmWallet()).rejects.toThrow(/No EVM wallet detected/);
     expect(onSolanaModuleLoad).not.toHaveBeenCalled();
     if (previousProvider) window.ethereum = previousProvider;
+  });
+
+  it("tracks EVM account and chain events and removes listeners on cleanup", async () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    let accounts: unknown = ["0x1111111111111111111111111111111111111111"];
+    let chainId: unknown = "0x1";
+    const provider = {
+      request: vi.fn(async ({ method }: { method: string }) =>
+        method === "eth_accounts" ? accounts : chainId),
+      on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(event, listener);
+      }),
+      removeListener: vi.fn((event: string) => {
+        listeners.delete(event);
+      }),
+    };
+    window.ethereum = provider;
+    const onChange = vi.fn();
+    const unsubscribe = await subscribeWalletAccountChanges("evm", onChange);
+
+    accounts = ["0x2222222222222222222222222222222222222222"];
+    listeners.get("accountsChanged")?.(accounts);
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      address: "0x2222222222222222222222222222222222222222",
+      chain: "evm",
+      chainId: "0x1",
+    })));
+
+    chainId = "0x89";
+    listeners.get("chainChanged")?.(chainId);
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      address: "0x2222222222222222222222222222222222222222",
+      chainId: "0x89",
+    })));
+
+    accounts = [];
+    listeners.get("accountsChanged")?.(accounts);
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith(null));
+
+    unsubscribe();
+    expect(listeners.size).toBe(0);
+    expect(provider.removeListener).toHaveBeenCalledTimes(3);
   });
 
   it("approves only the exact sell amount and submits the quoted 0x transaction", async () => {

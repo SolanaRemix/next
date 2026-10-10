@@ -9,6 +9,7 @@ import {
   fetchSolanaTokenBalances,
   sendSolanaNativeTransfer,
   signSolanaVersionedTransaction,
+  subscribeSolanaAccountChanges,
   simulateSolanaNativeTransfer,
 } from "./solanaProviders";
 
@@ -84,6 +85,43 @@ describe("signSolanaVersionedTransaction", () => {
       signSolanaVersionedTransaction(walletAccount, "AQ=="),
     ).rejects.toThrow(/account changed/i);
     expect(signTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("subscribeSolanaAccountChanges", () => {
+  it("tracks account and disconnect events and removes provider listeners", () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const provider = {
+      publicKey: account.publicKey,
+      connect: vi.fn(async () => ({ publicKey: account.publicKey })),
+      disconnect: vi.fn(async () => undefined),
+      signAndSendTransaction: vi.fn(async () => "signature"),
+      on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(event, listener);
+      }),
+      removeListener: vi.fn((event: string) => {
+        listeners.delete(event);
+      }),
+    };
+    window.solana = provider;
+    const onChange = vi.fn();
+    const unsubscribe = subscribeSolanaAccountChanges(onChange);
+    const nextAccount = Keypair.generate().publicKey;
+
+    listeners.get("accountChanged")?.(nextAccount);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      address: nextAccount.toBase58(),
+      chain: "solana",
+      chainId: "mainnet-beta",
+    }));
+    listeners.get("accountChanged")?.(null);
+    expect(onChange).toHaveBeenLastCalledWith(null);
+
+    listeners.get("disconnect")?.();
+    expect(onChange).toHaveBeenLastCalledWith(null);
+    unsubscribe();
+    expect(listeners.size).toBe(0);
+    expect(provider.removeListener).toHaveBeenCalledTimes(2);
   });
 });
 

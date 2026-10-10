@@ -8,6 +8,9 @@ import type {
 
 interface Eip1193Provider {
   request(args: { method: string; params?: readonly unknown[] }): Promise<unknown>;
+  on?(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+  off?(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
 declare global {
@@ -88,6 +91,70 @@ export async function disconnectWallet(chain: WalletAccount["chain"]): Promise<v
     const solana = await import("./solanaProviders");
     await solana.disconnectSolanaWallet();
   }
+}
+
+export async function subscribeWalletAccountChanges(
+  chain: WalletAccount["chain"],
+  onChange: (account: WalletAccount | null) => void,
+): Promise<() => void> {
+  if (chain === "solana") {
+    const solana = await import("./solanaProviders");
+    return solana.subscribeSolanaAccountChanges(onChange);
+  }
+
+  const provider = getEvmProvider();
+  const removeListener = provider.removeListener ?? provider.off;
+  if (!provider.on || !removeListener) return () => undefined;
+
+  let active = true;
+  let revision = 0;
+  const syncAccount = async () => {
+    const currentRevision = ++revision;
+    try {
+      const [accounts, chainId] = await Promise.all([
+        provider.request({ method: "eth_accounts" }),
+        provider.request({ method: "eth_chainId" }),
+      ]);
+      if (!active || currentRevision !== revision) return;
+      const address = Array.isArray(accounts) ? accounts[0] : undefined;
+      if (address === undefined && Array.isArray(accounts) && accounts.length === 0) {
+        onChange(null);
+        return;
+      }
+      if (typeof address !== "string" || !evmAddressPattern.test(address)
+        || typeof chainId !== "string" || !/^0x[0-9a-f]+$/i.test(chainId)) {
+        onChange(null);
+        return;
+      }
+      onChange({ address, chain: "evm", chainId, connectedAt: new Date().toISOString() });
+    } catch {
+      if (active && currentRevision === revision) onChange(null);
+    }
+  };
+  const disconnect = () => {
+    revision += 1;
+    if (active) onChange(null);
+  };
+  const refresh = () => { void syncAccount(); };
+  try {
+    provider.on("accountsChanged", refresh);
+    provider.on("chainChanged", refresh);
+    provider.on("disconnect", disconnect);
+  } catch (cause) {
+    active = false;
+    removeListener.call(provider, "accountsChanged", refresh);
+    removeListener.call(provider, "chainChanged", refresh);
+    removeListener.call(provider, "disconnect", disconnect);
+    throw cause;
+  }
+  return () => {
+    if (!active) return;
+    active = false;
+    revision += 1;
+    removeListener.call(provider, "accountsChanged", refresh);
+    removeListener.call(provider, "chainChanged", refresh);
+    removeListener.call(provider, "disconnect", disconnect);
+  };
 }
 
 export async function fetchNativeBalance(account: WalletAccount): Promise<WalletBalance> {
