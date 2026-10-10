@@ -21,6 +21,7 @@ const user = {
   passwordHash: 'argon2id-hash',
   role: UserRole.Guest,
   accountStatus: AccountStatus.Active,
+  authVersion: 0,
   deletedAt: null,
 };
 
@@ -35,6 +36,7 @@ function createFixture() {
         email: user.email,
         role: UserRole.Guest,
         accountStatus: AccountStatus.Active,
+        authVersion: 0,
       }),
       findFirst: vi.fn(),
       count: vi.fn(),
@@ -238,7 +240,7 @@ describe('AuthService', () => {
   });
 
   it('changes the password, preserves the current session, revokes others, and audits atomically', async () => {
-    const { service, prisma, transaction } = createFixture();
+    const { service, prisma, transaction, jwt } = createFixture();
     const currentToken = 'A'.repeat(43);
     const currentSessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
     prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
@@ -251,13 +253,22 @@ describe('AuthService', () => {
       revokedAt: null,
     });
     transaction.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+    transaction.user.findFirst.mockResolvedValue({
+      id: user.id,
+      role: UserRole.Guest,
+      authVersion: 1,
+    });
 
     await expect(service.changePassword(
       user.id,
       'current-secure-password',
       'new-secure-password',
       currentToken,
-    )).resolves.toBe(2);
+    )).resolves.toEqual({
+      revokedOtherSessions: 2,
+      accessToken: 'signed-access-token',
+      expiresIn: 15 * 60,
+    });
 
     expect(argonHash).toHaveBeenCalledWith('new-secure-password', expect.objectContaining({
       type: 2,
@@ -270,8 +281,16 @@ describe('AuthService', () => {
         accountStatus: AccountStatus.Active,
         deletedAt: null,
       },
-      data: { passwordHash: 'argon2id-hash' },
+      data: { passwordHash: 'argon2id-hash', authVersion: { increment: 1 } },
     });
+    expect(transaction.user.findFirst).toHaveBeenCalledWith({
+      where: { id: user.id, deletedAt: null, accountStatus: AccountStatus.Active },
+      select: { id: true, role: true, authVersion: true },
+    });
+    expect(jwt.signAsync).toHaveBeenCalledWith(
+      { sub: user.id, role: UserRole.Guest, authVersion: 1 },
+      expect.objectContaining({ expiresIn: '15m' }),
+    );
     expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
       where: { userId: user.id, id: { not: currentSessionId }, revokedAt: null },
       data: { revokedAt: expect.any(Date) },
@@ -280,7 +299,7 @@ describe('AuthService', () => {
       data: {
         actorId: user.id,
         action: 'auth.password.changed',
-        metadata: { revokedOtherSessions: 2 },
+        metadata: { revokedOtherSessions: 2, authVersion: 1 },
       },
     });
     expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
@@ -498,6 +517,12 @@ describe('AuthService', () => {
     );
 
     expect(updated.accountStatus).toBe(AccountStatus.Restricted);
+    expect(transaction.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: {
+        accountStatus: AccountStatus.Restricted,
+        authVersion: { increment: 1 },
+      },
+    }));
     expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: expect.any(Date) },

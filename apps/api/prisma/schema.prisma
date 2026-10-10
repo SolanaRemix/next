@@ -26,6 +26,7 @@ model User {
   passwordHash  String         @map("password_hash") @db.VarChar(255)
   role          UserRole       @default(Guest)
   accountStatus AccountStatus  @default(Active) @map("account_status")
+  authVersion   Int            @default(0) @map("auth_version")
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt     DateTime?      @map("deleted_at") @db.Timestamptz(6)

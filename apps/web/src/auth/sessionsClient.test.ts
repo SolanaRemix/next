@@ -77,7 +77,11 @@ describe("authenticated refresh-session client", () => {
 
   it("changes the password with the current session and validates revoked-session count", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ revokedOtherSessions: 2 }),
+      JSON.stringify({
+        revokedOtherSessions: 2,
+        accessToken: "replacement-access-token",
+        expiresIn: 900,
+      }),
       { status: 200 },
     ));
     vi.stubGlobal("fetch", fetch);
@@ -87,7 +91,11 @@ describe("authenticated refresh-session client", () => {
       "access-token",
       "current-secure-password",
       "new-secure-password",
-    )).resolves.toBe(2);
+    )).resolves.toEqual({
+      revokedOtherSessions: 2,
+      accessToken: "replacement-access-token",
+      expiresIn: 900,
+    });
     expect(fetch).toHaveBeenCalledWith("/api/auth/password", expect.objectContaining({
       method: "PATCH",
       credentials: "include",
@@ -104,7 +112,11 @@ describe("authenticated refresh-session client", () => {
 
   it("rejects malformed password change results", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ revokedOtherSessions: "two" }),
+      JSON.stringify({
+        revokedOtherSessions: "two",
+        accessToken: "replacement-access-token",
+        expiresIn: 900,
+      }),
       { status: 200 },
     )));
 

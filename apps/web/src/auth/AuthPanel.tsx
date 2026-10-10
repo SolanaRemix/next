@@ -6,7 +6,15 @@ import type { SessionSummary } from "./sessionsClient";
 
 const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:3001/api").replace(/\/+$/, "");
 
-function SessionManager({ accessToken, logout }: { accessToken: string; logout: () => Promise<void> }) {
+function SessionManager({
+  accessToken,
+  logout,
+  updateAccessToken,
+}: {
+  accessToken: string;
+  logout: () => Promise<void>;
+  updateAccessToken: (accessToken: string, expiresIn: number) => void;
+}) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
@@ -85,16 +93,19 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
     }
     setChangingPassword(true);
     try {
-      const revokedCount = await changePassword(
+      const result = await changePassword(
         apiUrl,
         accessToken,
         currentPassword,
         newPassword,
       );
+      updateAccessToken(result.accessToken, result.expiresIn);
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setNotice(`Password updated. ${revokedCount} other session${revokedCount === 1 ? "" : "s"} signed out.`);
+      setNotice(
+        `Password updated. ${result.revokedOtherSessions} other session${result.revokedOtherSessions === 1 ? "" : "s"} signed out.`,
+      );
       await loadSessions();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to change password.");
@@ -210,7 +221,17 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
 }
 
 export function AuthPanel() {
-  const { accessToken, user, loading, error, login, register, logout, clearError } = useAuth();
+  const {
+    accessToken,
+    user,
+    loading,
+    error,
+    login,
+    register,
+    logout,
+    updateAccessToken,
+    clearError,
+  } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -241,7 +262,13 @@ export function AuthPanel() {
             <button type="button" className="text-button" onClick={() => void logout()}>Sign out</button>
           </div>
         </div>
-        {accessToken && <SessionManager accessToken={accessToken} logout={logout} />}
+        {accessToken && (
+          <SessionManager
+            accessToken={accessToken}
+            logout={logout}
+            updateAccessToken={updateAccessToken}
+          />
+        )}
       </GlassCard>
     );
   }

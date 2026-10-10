@@ -6,9 +6,13 @@ export interface SessionSummary {
   current: boolean;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function isSessionSummary(value: unknown): value is SessionSummary {
-  if (!value || typeof value !== "object") return false;
-  const session = value as Record<string, unknown>;
+  if (!isRecord(value)) return false;
+  const session = value;
   return typeof session.id === "string" &&
     typeof session.createdAt === "string" &&
     Number.isFinite(Date.parse(session.createdAt)) &&
@@ -69,8 +73,7 @@ export async function revokeOtherSessions(
   if (!response.ok) throw new Error(await readError(response));
   const data: unknown = await response.json().catch(() => null);
   if (
-    !data ||
-    typeof data !== "object" ||
+    !isRecord(data) ||
     !("revokedCount" in data) ||
     typeof data.revokedCount !== "number" ||
     !Number.isSafeInteger(data.revokedCount) ||
@@ -81,12 +84,18 @@ export async function revokeOtherSessions(
   return data.revokedCount;
 }
 
+export interface PasswordChangeResult {
+  revokedOtherSessions: number;
+  accessToken: string;
+  expiresIn: number;
+}
+
 export async function changePassword(
   apiUrl: string,
   accessToken: string,
   currentPassword: string,
   newPassword: string,
-): Promise<number> {
+): Promise<PasswordChangeResult> {
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/auth/password`, {
     method: "PATCH",
     credentials: "include",
@@ -99,15 +108,25 @@ export async function changePassword(
   });
   if (!response.ok) throw new Error(await readError(response));
   const data: unknown = await response.json().catch(() => null);
+  if (!isRecord(data)) {
+    throw new Error("Authentication service returned an invalid password change result.");
+  }
   if (
-    !data ||
-    typeof data !== "object" ||
-    !("revokedOtherSessions" in data) ||
     typeof data.revokedOtherSessions !== "number" ||
     !Number.isSafeInteger(data.revokedOtherSessions) ||
-    data.revokedOtherSessions < 0
+    data.revokedOtherSessions < 0 ||
+    typeof data.accessToken !== "string" ||
+    data.accessToken.length === 0 ||
+    typeof data.expiresIn !== "number" ||
+    !Number.isSafeInteger(data.expiresIn) ||
+    data.expiresIn < 1 ||
+    data.expiresIn > 900
   ) {
     throw new Error("Authentication service returned an invalid password change result.");
   }
-  return data.revokedOtherSessions;
+  return {
+    revokedOtherSessions: data.revokedOtherSessions,
+    accessToken: data.accessToken,
+    expiresIn: data.expiresIn,
+  };
 }

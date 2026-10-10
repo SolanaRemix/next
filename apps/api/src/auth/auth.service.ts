@@ -35,6 +35,12 @@ export interface AuthSession {
   user: PublicUser;
 }
 
+export interface PasswordChangeResult {
+  revokedOtherSessions: number;
+  accessToken: string;
+  expiresIn: number;
+}
+
 export interface RefreshSessionSummary {
   id: string;
   createdAt: Date;
@@ -73,7 +79,7 @@ export class AuthService {
             passwordHash,
             role: UserRole.Guest,
           },
-          select: { id: true, email: true, role: true },
+          select: { id: true, email: true, role: true, authVersion: true },
         });
         return this.persistSession(transaction, user, 'auth.register');
       });
@@ -247,7 +253,7 @@ export class AuthService {
     currentPassword: string,
     newPassword: string,
     currentRefreshToken: string | undefined,
-  ): Promise<number> {
+  ): Promise<PasswordChangeResult> {
     if (currentPassword === newPassword) {
       throw new BadRequestException('New password must be different from the current password.');
     }
@@ -296,11 +302,16 @@ export class AuthService {
           accountStatus: AccountStatus.Active,
           deletedAt: null,
         },
-        data: { passwordHash: newPasswordHash },
+        data: { passwordHash: newPasswordHash, authVersion: { increment: 1 } },
       });
       if (changed.count !== 1) {
         throw new ConflictException('Password changed concurrently. Sign in again and retry.');
       }
+      const updatedUser = await transaction.user.findFirst({
+        where: { id: userId, deletedAt: null, accountStatus: AccountStatus.Active },
+        select: { id: true, role: true, authVersion: true },
+      });
+      if (!updatedUser) throw new UnauthorizedException();
       const revoked = await transaction.refreshToken.updateMany({
         where: {
           userId,
@@ -313,10 +324,21 @@ export class AuthService {
         data: {
           actorId: userId,
           action: 'auth.password.changed',
-          metadata: { revokedOtherSessions: revoked.count },
+          metadata: {
+            revokedOtherSessions: revoked.count,
+            authVersion: updatedUser.authVersion,
+          },
         },
       });
-      return revoked.count;
+      return {
+        revokedOtherSessions: revoked.count,
+        accessToken: await this.issueAccessToken(
+          updatedUser.id,
+          updatedUser.role,
+          updatedUser.authVersion,
+        ),
+        expiresIn: 15 * 60,
+      };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
@@ -429,7 +451,7 @@ export class AuthService {
       if (target.accountStatus === status) return target;
       const updated = await transaction.user.update({
         where: { id: targetId },
-        data: { accountStatus: status },
+        data: { accountStatus: status, authVersion: { increment: 1 } },
         select: { id: true, email: true, role: true, accountStatus: true, createdAt: true },
       });
       await transaction.auditLog.create({
@@ -454,13 +476,13 @@ export class AuthService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
-  private async createSession(user: PublicUser, action: string): Promise<AuthSession> {
+  private async createSession(user: PublicUser & { authVersion: number }, action: string): Promise<AuthSession> {
     return this.prisma.$transaction((transaction) => this.persistSession(transaction, user, action));
   }
 
   private async persistSession(
     transaction: Prisma.TransactionClient,
-    user: PublicUser,
+    user: PublicUser & { authVersion: number },
     action: string,
   ): Promise<AuthSession> {
     const refreshToken = newRefreshToken();
@@ -474,19 +496,23 @@ export class AuthService {
     await transaction.auditLog.create({
       data: { actorId: user.id, action },
     });
-    const accessToken = await this.jwt.signAsync(
-      { sub: user.id, role: user.role },
-      {
-        audience: JWT_AUDIENCE,
-        issuer: JWT_ISSUER,
-        expiresIn: '15m',
-      },
-    );
+    const accessToken = await this.issueAccessToken(user.id, user.role, user.authVersion);
     return {
       accessToken,
       refreshToken,
       expiresIn: 15 * 60,
       user: { id: user.id, email: user.email, role: user.role },
     };
+  }
+
+  private issueAccessToken(userId: string, role: UserRole, authVersion: number): Promise<string> {
+    return this.jwt.signAsync(
+      { sub: userId, role, authVersion },
+      {
+        audience: JWT_AUDIENCE,
+        issuer: JWT_ISSUER,
+        expiresIn: '15m',
+      },
+    );
   }
 }

@@ -28,7 +28,7 @@ import {
   ListUsersQueryDto,
   UpdateAccountStatusDto,
 } from './auth.dto.js';
-import { AuthService, type AuthSession } from './auth.service.js';
+import { AuthService, type AuthSession, type PasswordChangeResult } from './auth.service.js';
 
 function setRefreshCookie(response: Response, token: string): void {
   response.cookie(REFRESH_COOKIE_NAME, token, {
@@ -129,13 +129,13 @@ export class AuthController {
     @Body() request: ChangePasswordDto,
     @CurrentUser() user: AuthUser,
     @Req() httpRequest: Request,
-  ): Promise<{ revokedOtherSessions: number }> {
+  ): Promise<PasswordChangeResult> {
     return this.authService.changePassword(
       user.id,
       request.currentPassword,
       request.newPassword,
       httpRequest.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
-    ).then((revokedOtherSessions) => ({ revokedOtherSessions }));
+    );
   }
 
   @Delete('sessions/revoke-others')
