@@ -17,6 +17,7 @@ import { FinancialControlsModule } from './financial-controls/financial-controls
 import { HealthModule } from './health/health.module.js';
 import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.module.js';
 import { AuditModule } from './audit/audit.module.js';
+import { ObservabilityModule } from './observability/observability.module.js';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { AuditModule } from './audit/audit.module.js';
     PortfolioPricesModule,
     SwapsModule,
     AuditModule,
+    ObservabilityModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

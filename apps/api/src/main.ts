@@ -3,8 +3,10 @@ import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
 import { createRequestLoggingMiddleware } from './observability/request-logging.middleware.js';
+import { startTelemetry } from './observability/telemetry.js';
 
 async function bootstrap(): Promise<void> {
+  await startTelemetry();
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.use(createRequestLoggingMiddleware());
@@ -17,7 +19,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'traceparent', 'tracestate'],
     exposedHeaders: ['X-Request-Id'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });

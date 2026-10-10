@@ -37,6 +37,26 @@ describe('validateEnvironment', () => {
       .toThrow(/WEB_ORIGIN/);
   });
 
+  it('validates OpenTelemetry collector URLs and service names', () => {
+    expect(validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example/otel',
+      OTEL_SERVICE_NAME: 'next-api.production',
+    })).toMatchObject({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example/otel' });
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'ftp://collector.example',
+    })).toThrow(/without credentials or query data/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example?token=secret',
+    })).toThrow(/without credentials or query data/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_SERVICE_NAME: 'invalid service name',
+    })).toThrow(/OTEL_SERVICE_NAME/);
+  });
+
   it('requires a valid Redis URL in production and accepts TLS URLs', () => {
     expect(() => validateEnvironment({ ...validConfig, NODE_ENV: 'production' }))
       .toThrow(/REDIS_URL is required/);

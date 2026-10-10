@@ -70,6 +70,34 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
   if (typeof jwtSecret !== 'string' || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
     throw new Error('JWT_ACCESS_SECRET must contain at least 32 bytes.');
   }
+  const otelEndpoint = config.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (otelEndpoint !== undefined) {
+    if (typeof otelEndpoint !== 'string') {
+      throw new Error('OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) URL.');
+    }
+    try {
+      const endpoint = new URL(otelEndpoint);
+      if (
+        !['http:', 'https:'].includes(endpoint.protocol) ||
+        !endpoint.hostname ||
+        endpoint.username ||
+        endpoint.password ||
+        endpoint.search ||
+        endpoint.hash
+      ) {
+        throw new Error();
+      }
+    } catch {
+      throw new Error('OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) URL without credentials or query data.');
+    }
+  }
+  const otelServiceName = config.OTEL_SERVICE_NAME;
+  if (
+    otelServiceName !== undefined &&
+    (typeof otelServiceName !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(otelServiceName))
+  ) {
+    throw new Error('OTEL_SERVICE_NAME must be 1-128 alphanumeric, dot, underscore, or hyphen characters.');
+  }
   const redisUrl = config.REDIS_URL;
   if (config.NODE_ENV === 'production' && typeof redisUrl !== 'string') {
     throw new Error('REDIS_URL is required in production.');
