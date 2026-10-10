@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useAuth } from "./AuthContext";
-import { fetchSessions, revokeOtherSessions, revokeSession } from "./sessionsClient";
+import { changePassword, fetchSessions, revokeOtherSessions, revokeSession } from "./sessionsClient";
 import type { SessionSummary } from "./sessionsClient";
 
 const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:3001/api").replace(/\/+$/, "");
@@ -11,6 +11,10 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
   const [loading, setLoading] = useState(true);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [revokingOthers, setRevokingOthers] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -68,6 +72,34 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
       setError(cause instanceof Error ? cause.message : "Unable to revoke other sessions.");
     } finally {
       setRevokingOthers(false);
+    }
+  }
+
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setNotice(null);
+    if (newPassword !== confirmPassword) {
+      setError("New passwords do not match.");
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      const revokedCount = await changePassword(
+        apiUrl,
+        accessToken,
+        currentPassword,
+        newPassword,
+      );
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setNotice(`Password updated. ${revokedCount} other session${revokedCount === 1 ? "" : "s"} signed out.`);
+      await loadSessions();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to change password.");
+    } finally {
+      setChangingPassword(false);
     }
   }
 
@@ -129,6 +161,50 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
       {error && <p className="message message--error" role="alert">{error}</p>}
       {notice && <p className="message message--success" role="status">{notice}</p>}
       <p className="muted session-note">Revoking a session prevents future token refresh. Access already issued to a device may remain valid for up to 15 minutes.</p>
+      <form className="auth-form password-change-form" onSubmit={(event) => void submitPasswordChange(event)}>
+        <div className="section-heading">
+          <div><p className="eyebrow">PASSWORD SECURITY</p><h3>Change password</h3></div>
+        </div>
+        <label>Current password
+          <input
+            required
+            autoComplete="current-password"
+            minLength={12}
+            maxLength={128}
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+          />
+        </label>
+        <label>New password
+          <input
+            required
+            autoComplete="new-password"
+            minLength={12}
+            maxLength={128}
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+          />
+        </label>
+        <label>Confirm new password
+          <input
+            required
+            autoComplete="new-password"
+            minLength={12}
+            maxLength={128}
+            type="password"
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+          />
+        </label>
+        <div className="auth-actions">
+          <FlashButton type="submit" disabled={changingPassword || revokingOthers || busySessionId !== null}>
+            {changingPassword ? "Updating…" : "Update password"}
+          </FlashButton>
+        </div>
+        <p className="muted session-note">Other refresh sessions are revoked after the change. Access tokens already issued elsewhere may remain valid for up to 15 minutes.</p>
+      </form>
     </section>
   );
 }

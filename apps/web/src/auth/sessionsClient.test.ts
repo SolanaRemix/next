@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchSessions, revokeOtherSessions, revokeSession } from "./sessionsClient";
+import { changePassword, fetchSessions, revokeOtherSessions, revokeSession } from "./sessionsClient";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -73,5 +73,42 @@ describe("authenticated refresh-session client", () => {
 
     await expect(revokeOtherSessions("/api", "access-token"))
       .rejects.toThrow(/invalid session revocation result/i);
+  });
+
+  it("changes the password with the current session and validates revoked-session count", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ revokedOtherSessions: 2 }),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(changePassword(
+      "/api/",
+      "access-token",
+      "current-secure-password",
+      "new-secure-password",
+    )).resolves.toBe(2);
+    expect(fetch).toHaveBeenCalledWith("/api/auth/password", expect.objectContaining({
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        authorization: ["Bearer", "access-token"].join(" "),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        currentPassword: "current-secure-password",
+        newPassword: "new-secure-password",
+      }),
+    }));
+  });
+
+  it("rejects malformed password change results", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ revokedOtherSessions: "two" }),
+      { status: 200 },
+    )));
+
+    await expect(changePassword("/api", "access-token", "current-password", "new-password"))
+      .rejects.toThrow(/invalid password change result/i);
   });
 });

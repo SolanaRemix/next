@@ -80,3 +80,34 @@ export async function revokeOtherSessions(
   }
   return data.revokedCount;
 }
+
+export async function changePassword(
+  apiUrl: string,
+  accessToken: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<number> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/auth/password`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      authorization: "Bearer " + accessToken,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ currentPassword, newPassword }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  const data: unknown = await response.json().catch(() => null);
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("revokedOtherSessions" in data) ||
+    typeof data.revokedOtherSessions !== "number" ||
+    !Number.isSafeInteger(data.revokedOtherSessions) ||
+    data.revokedOtherSessions < 0
+  ) {
+    throw new Error("Authentication service returned an invalid password change result.");
+  }
+  return data.revokedOtherSessions;
+}

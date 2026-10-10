@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -235,6 +236,87 @@ export class AuthService {
           actorId: userId,
           action: 'auth.sessions.others_revoked',
           metadata: { revokedCount: revoked.count },
+        },
+      });
+      return revoked.count;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    currentRefreshToken: string | undefined,
+  ): Promise<number> {
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('New password must be different from the current password.');
+    }
+    if (!currentRefreshToken || !/^[A-Za-z0-9_-]{43}$/.test(currentRefreshToken)) {
+      throw new UnauthorizedException('Current refresh session is invalid or expired.');
+    }
+    const account = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null, accountStatus: AccountStatus.Active },
+      select: { passwordHash: true },
+    });
+    if (!account || !(await argon2.verify(account.passwordHash, currentPassword))) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.password.change.failed',
+          metadata: { reason: 'current_password_invalid' },
+        },
+      });
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+    if (await argon2.verify(account.passwordHash, newPassword)) {
+      throw new BadRequestException('New password must be different from the current password.');
+    }
+    const newPasswordHash = await argon2.hash(newPassword, {
+      type: argon2.argon2id,
+      memoryCost: 19_456,
+      timeCost: 2,
+      parallelism: 1,
+    });
+    const tokenHash = hashRefreshToken(currentRefreshToken);
+    return this.prisma.$transaction(async (transaction) => {
+      const now = new Date();
+      const currentSession = await transaction.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+      });
+      if (
+        !currentSession ||
+        currentSession.userId !== userId ||
+        currentSession.revokedAt !== null ||
+        currentSession.expiresAt <= now
+      ) {
+        throw new UnauthorizedException('Current refresh session is invalid or expired.');
+      }
+      const changed = await transaction.user.updateMany({
+        where: {
+          id: userId,
+          passwordHash: account.passwordHash,
+          accountStatus: AccountStatus.Active,
+          deletedAt: null,
+        },
+        data: { passwordHash: newPasswordHash },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException('Password changed concurrently. Sign in again and retry.');
+      }
+      const revoked = await transaction.refreshToken.updateMany({
+        where: {
+          userId,
+          id: { not: currentSession.id },
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.password.changed',
+          metadata: { revokedOtherSessions: revoked.count },
         },
       });
       return revoked.count;

@@ -23,6 +23,7 @@ import { CurrentUser, Public, Roles } from './auth.decorators.js';
 import type { AuthUser } from './auth-user.js';
 import {
   AssignRoleDto,
+  ChangePasswordDto,
   CredentialsDto,
   ListUsersQueryDto,
   UpdateAccountStatusDto,
@@ -120,6 +121,21 @@ export class AuthController {
       user.id,
       request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
     );
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Patch('password')
+  changePassword(
+    @Body() request: ChangePasswordDto,
+    @CurrentUser() user: AuthUser,
+    @Req() httpRequest: Request,
+  ): Promise<{ revokedOtherSessions: number }> {
+    return this.authService.changePassword(
+      user.id,
+      request.currentPassword,
+      request.newPassword,
+      httpRequest.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
+    ).then((revokedOtherSessions) => ({ revokedOtherSessions }));
   }
 
   @Delete('sessions/revoke-others')

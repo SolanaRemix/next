@@ -39,6 +39,7 @@ function createFixture() {
       findFirst: vi.fn(),
       count: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     refreshToken: {
       create: vi.fn().mockResolvedValue({}),
@@ -234,6 +235,94 @@ describe('AuthService', () => {
     await expect(service.revokeSession(user.id, 'c15c090e-2615-4e52-ad67-f212a4154074'))
       .rejects.toThrow(/Session not found/);
     expect(transaction.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('changes the password, preserves the current session, revokes others, and audits atomically', async () => {
+    const { service, prisma, transaction } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const currentSessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
+    prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
+    argonVerify.mockImplementation(async (_hash, password) =>
+      password === 'current-secure-password');
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: currentSessionId,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    transaction.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+
+    await expect(service.changePassword(
+      user.id,
+      'current-secure-password',
+      'new-secure-password',
+      currentToken,
+    )).resolves.toBe(2);
+
+    expect(argonHash).toHaveBeenCalledWith('new-secure-password', expect.objectContaining({
+      type: 2,
+      memoryCost: 19_456,
+    }));
+    expect(transaction.user.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: user.id,
+        passwordHash: user.passwordHash,
+        accountStatus: AccountStatus.Active,
+        deletedAt: null,
+      },
+      data: { passwordHash: 'argon2id-hash' },
+    });
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: user.id, id: { not: currentSessionId }, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.password.changed',
+        metadata: { revokedOtherSessions: 2 },
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+  });
+
+  it('rejects an incorrect current password and records no password values', async () => {
+    const { service, prisma, transaction } = createFixture();
+    prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
+    argonVerify.mockResolvedValue(false);
+
+    await expect(service.changePassword(
+      user.id,
+      'incorrect-current-password',
+      'new-secure-password',
+      'A'.repeat(43),
+    )).rejects.toThrow(/current password is incorrect/i);
+
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.password.change.failed',
+        metadata: { reason: 'current_password_invalid' },
+      },
+    });
+    expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain('incorrect-current-password');
+    expect(transaction.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing refresh session before changing the password', async () => {
+    const { service, prisma, transaction } = createFixture();
+
+    await expect(service.changePassword(
+      user.id,
+      'current-secure-password',
+      'new-secure-password',
+      undefined,
+    )).rejects.toThrow(/current refresh session is invalid/i);
+
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(transaction.user.updateMany).not.toHaveBeenCalled();
   });
 
   it('revokes other active sessions but preserves and audits the current session', async () => {
