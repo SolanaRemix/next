@@ -325,6 +325,30 @@ describe('AuthService', () => {
     expect(transaction.user.updateMany).not.toHaveBeenCalled();
   });
 
+  it('rejects a revoked current refresh session without applying the password change', async () => {
+    const { service, prisma, transaction } = createFixture();
+    prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
+    argonVerify.mockImplementation(async (_hash, password) =>
+      password === 'current-secure-password');
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: 'revoked-session',
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: new Date(),
+    });
+
+    await expect(service.changePassword(
+      user.id,
+      'current-secure-password',
+      'new-secure-password',
+      'A'.repeat(43),
+    )).rejects.toThrow(/current refresh session is invalid/i);
+
+    expect(transaction.user.updateMany).not.toHaveBeenCalled();
+    expect(transaction.refreshToken.updateMany).not.toHaveBeenCalled();
+    expect(transaction.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it('revokes other active sessions but preserves and audits the current session', async () => {
     const { service, transaction, prisma } = createFixture();
     const currentToken = 'A'.repeat(43);

@@ -1,6 +1,6 @@
 import {
-  ConflictException,
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -267,9 +267,6 @@ export class AuthService {
         },
       });
       throw new UnauthorizedException('Current password is incorrect.');
-    }
-    if (await argon2.verify(account.passwordHash, newPassword)) {
-      throw new BadRequestException('New password must be different from the current password.');
     }
     const newPasswordHash = await argon2.hash(newPassword, {
       type: argon2.argon2id,

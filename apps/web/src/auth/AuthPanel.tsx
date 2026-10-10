@@ -119,7 +119,7 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
               type="button"
               className="text-button session-revoke"
               onClick={() => void revokeOthers()}
-              disabled={loading || revokingOthers || busySessionId !== null}
+              disabled={loading || revokingOthers || changingPassword || busySessionId !== null}
             >
               {revokingOthers ? "Revoking…" : "Sign out other devices"}
             </button>
@@ -149,7 +149,7 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
               <button
                 type="button"
                 className="text-button session-revoke"
-                disabled={busySessionId !== null}
+                disabled={busySessionId !== null || changingPassword || revokingOthers}
                 onClick={() => void revoke(session.id, session.current)}
               >
                 {busySessionId === session.id ? "Revoking…" : session.current ? "Sign out this device" : "Revoke"}
