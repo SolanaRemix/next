@@ -51,4 +51,14 @@ describe("SuperAdmin audit log client", () => {
     )));
     await expect(fetchAuditLogs("/api", "viewer-token")).rejects.toThrow("Forbidden resource");
   });
+
+  it("rejects a page larger than its requested limit", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({
+      ...page,
+      entries: [...page.entries, ...page.entries],
+    })));
+
+    await expect(fetchAuditLogs("/api", "admin-token", { limit: 1 }))
+      .rejects.toThrow(/invalid data/i);
+  });
 });

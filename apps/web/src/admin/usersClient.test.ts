@@ -78,4 +78,18 @@ describe("SuperAdmin user management client", () => {
     )));
     await expect(fetchAdminUsers("/api", "viewer-token")).rejects.toThrow(/Forbidden resource SuperAdmin required/);
   });
+
+  it("bounds administrator error messages before returning them to UI", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(
+      { message: `  ${"x".repeat(700)}  ` },
+      { status: 403 },
+    )));
+
+    try {
+      await fetchAdminUsers("/api", "viewer-token");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toHaveLength(500);
+    }
+  });
 });
