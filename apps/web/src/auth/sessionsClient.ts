@@ -23,7 +23,7 @@ async function readError(response: Response): Promise<string> {
   const data: unknown = await response.json().catch(() => null);
   if (data && typeof data === "object" && "message" in data) {
     const message = (data as { message?: unknown }).message;
-    if (typeof message === "string") return message;
+    if (typeof message === "string") return message.slice(0, 500);
   }
   return "Session request failed.";
 }
@@ -54,4 +54,29 @@ export async function revokeSession(
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(await readError(response));
+}
+
+export async function revokeOtherSessions(
+  apiUrl: string,
+  accessToken: string,
+): Promise<number> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/auth/sessions/revoke-others`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { authorization: "Bearer " + accessToken },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  const data: unknown = await response.json().catch(() => null);
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("revokedCount" in data) ||
+    typeof data.revokedCount !== "number" ||
+    !Number.isSafeInteger(data.revokedCount) ||
+    data.revokedCount < 0
+  ) {
+    throw new Error("Authentication service returned an invalid session revocation result.");
+  }
+  return data.revokedCount;
 }

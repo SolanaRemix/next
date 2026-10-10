@@ -236,6 +236,90 @@ describe('AuthService', () => {
     expect(transaction.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it('revokes other active sessions but preserves and audits the current session', async () => {
+    const { service, transaction, prisma } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const currentSessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: currentSessionId,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    transaction.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+
+    await expect(service.revokeOtherSessions(user.id, currentToken)).resolves.toBe(2);
+
+    expect(transaction.refreshToken.findUnique).toHaveBeenCalledWith({
+      where: { tokenHash: createHash('sha256').update(currentToken, 'utf8').digest('hex') },
+      select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+    });
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: user.id,
+        id: { not: currentSessionId },
+        revokedAt: null,
+        expiresAt: { gt: expect.any(Date) },
+      },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.sessions.others_revoked',
+        metadata: { revokedCount: 2 },
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' },
+    );
+  });
+
+  it('does not revoke sessions when the current refresh token is missing or invalid', async () => {
+    const { service, prisma, transaction } = createFixture();
+
+    await expect(service.revokeOtherSessions(user.id, undefined))
+      .rejects.toThrow(/current refresh session is invalid/i);
+    await expect(service.revokeOtherSessions(user.id, 'invalid'))
+      .rejects.toThrow(/current refresh session is invalid/i);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(transaction.refreshToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects expired, revoked, or foreign current refresh sessions', async () => {
+    const { service, transaction } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const invalidSessions = [
+      {
+        id: 'expired-session',
+        userId: user.id,
+        expiresAt: new Date(Date.now() - 60_000),
+        revokedAt: null,
+      },
+      {
+        id: 'revoked-session',
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: new Date(),
+      },
+      {
+        id: 'foreign-session',
+        userId: 'another-user',
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+      },
+    ];
+    for (const session of invalidSessions) {
+      transaction.refreshToken.findUnique.mockResolvedValueOnce(session);
+      await expect(service.revokeOtherSessions(user.id, currentToken))
+        .rejects.toThrow(/current refresh session is invalid/i);
+    }
+    expect(transaction.refreshToken.updateMany).not.toHaveBeenCalled();
+    expect(transaction.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it('assigns roles only through an audited SuperAdmin action', async () => {
     const { service, transaction } = createFixture();
     transaction.user.findFirst

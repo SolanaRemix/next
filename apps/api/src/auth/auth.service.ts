@@ -202,6 +202,45 @@ export class AuthService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
+  async revokeOtherSessions(userId: string, currentRefreshToken: string | undefined): Promise<number> {
+    if (!currentRefreshToken || !/^[A-Za-z0-9_-]{43}$/.test(currentRefreshToken)) {
+      throw new UnauthorizedException('Current refresh session is invalid or expired.');
+    }
+    const tokenHash = hashRefreshToken(currentRefreshToken);
+    return this.prisma.$transaction(async (transaction) => {
+      const now = new Date();
+      const current = await transaction.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+      });
+      if (
+        !current ||
+        current.userId !== userId ||
+        current.revokedAt !== null ||
+        current.expiresAt <= now
+      ) {
+        throw new UnauthorizedException('Current refresh session is invalid or expired.');
+      }
+      const revoked = await transaction.refreshToken.updateMany({
+        where: {
+          userId,
+          id: { not: current.id },
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { revokedAt: now },
+      });
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.sessions.others_revoked',
+          metadata: { revokedCount: revoked.count },
+        },
+      });
+      return revoked.count;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
   async listUsers(limit: number, cursor?: string): Promise<AdminUser[]> {
     return this.prisma.user.findMany({
       where: { deletedAt: null },

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useAuth } from "./AuthContext";
-import { fetchSessions, revokeSession } from "./sessionsClient";
+import { fetchSessions, revokeOtherSessions, revokeSession } from "./sessionsClient";
 import type { SessionSummary } from "./sessionsClient";
 
 const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:3001/api").replace(/\/+$/, "");
@@ -10,7 +10,9 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [revokingOthers, setRevokingOthers] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function loadSessions() {
     setLoading(true);
@@ -38,6 +40,7 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
   async function revoke(id: string, current: boolean) {
     setBusySessionId(id);
     setError(null);
+    setNotice(null);
     try {
       await revokeSession(apiUrl, accessToken, id);
       if (current) {
@@ -52,11 +55,45 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
     }
   }
 
+  async function revokeOthers() {
+    if (!window.confirm("Sign out all other active sessions? This device will stay signed in.")) return;
+    setRevokingOthers(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const revokedCount = await revokeOtherSessions(apiUrl, accessToken);
+      await loadSessions();
+      setNotice(`${revokedCount} other active session${revokedCount === 1 ? "" : "s"} revoked.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to revoke other sessions.");
+    } finally {
+      setRevokingOthers(false);
+    }
+  }
+
+  const activeOtherSessions = sessions.filter((session) =>
+    !session.current &&
+    session.revokedAt === null &&
+    Date.parse(session.expiresAt) > Date.now(),
+  ).length;
+
   return (
     <section className="session-manager" aria-labelledby="sessions-heading">
       <div className="section-heading">
         <div><p className="eyebrow">ACCOUNT SECURITY</p><h3 id="sessions-heading">Signed-in sessions</h3></div>
-        <button type="button" className="text-button" onClick={() => void loadSessions()} disabled={loading}>Refresh</button>
+        <div className="button-row">
+          {activeOtherSessions > 0 && (
+            <button
+              type="button"
+              className="text-button session-revoke"
+              onClick={() => void revokeOthers()}
+              disabled={loading || revokingOthers || busySessionId !== null}
+            >
+              {revokingOthers ? "Revoking…" : "Sign out other devices"}
+            </button>
+          )}
+          <button type="button" className="text-button" onClick={() => void loadSessions()} disabled={loading}>Refresh</button>
+        </div>
       </div>
       {loading && <p className="muted" role="status">Loading sessions…</p>}
       {!loading && sessions.length === 0 && <p className="muted">No refresh sessions found.</p>}
@@ -90,6 +127,7 @@ function SessionManager({ accessToken, logout }: { accessToken: string; logout: 
         );
       })}
       {error && <p className="message message--error" role="alert">{error}</p>}
+      {notice && <p className="message message--success" role="status">{notice}</p>}
       <p className="muted session-note">Revoking a session prevents future token refresh. Access already issued to a device may remain valid for up to 15 minutes.</p>
     </section>
   );

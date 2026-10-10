@@ -122,6 +122,17 @@ export class AuthController {
     );
   }
 
+  @Delete('sessions/revoke-others')
+  revokeOtherSessions(
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request,
+  ): Promise<{ revokedCount: number }> {
+    return this.authService.revokeOtherSessions(
+      user.id,
+      request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
+    ).then((revokedCount) => ({ revokedCount }));
+  }
+
   @Delete('sessions/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async revokeSession(

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchSessions, revokeSession } from "./sessionsClient";
+import { fetchSessions, revokeOtherSessions, revokeSession } from "./sessionsClient";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -48,5 +48,30 @@ describe("authenticated refresh-session client", () => {
 
     await expect(revokeSession("/api", "access-token", "missing"))
       .rejects.toThrow(/Session not found/);
+  });
+
+  it("revokes other sessions while preserving the current session", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ revokedCount: 3 }),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(revokeOtherSessions("/api/", "access-token")).resolves.toBe(3);
+    expect(fetch).toHaveBeenCalledWith("/api/auth/sessions/revoke-others", expect.objectContaining({
+      method: "DELETE",
+      credentials: "include",
+      headers: { authorization: ["Bearer", "access-token"].join(" ") },
+    }));
+  });
+
+  it("rejects invalid other-session revocation results", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ revokedCount: -1 }),
+      { status: 200 },
+    )));
+
+    await expect(revokeOtherSessions("/api", "access-token"))
+      .rejects.toThrow(/invalid session revocation result/i);
   });
 });
