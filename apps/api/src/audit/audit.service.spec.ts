@@ -39,78 +39,93 @@ describe('AuditService', () => {
       },
     });
 
-    it('returns bounded audit pages with actor identity and stable newest-first cursors', async () => {
-      const { service, prisma } = createService();
-      const createdAt = new Date('2026-10-09T12:00:00.000Z');
-      prisma.auditLog.findMany.mockResolvedValue([
+  });
+
+  it('returns bounded audit pages with actor identity and stable newest-first cursors', async () => {
+    const { service, prisma } = createService();
+    const createdAt = new Date('2026-10-09T12:00:00.000Z');
+    prisma.auditLog.findMany.mockResolvedValue([
+      {
+        id: 'audit-1',
+        actorId: 'actor-1',
+        actor: { email: 'admin@example.com' },
+        action: 'admin.user.role_changed',
+        metadata: { previousRole: 'Guest', newRole: 'Trader' },
+        createdAt,
+      },
+      {
+        id: 'audit-2',
+        actorId: null,
+        actor: null,
+        action: 'auth.login.failed',
+        metadata: { outcome: 'failure' },
+        createdAt,
+      },
+      {
+        id: 'audit-3',
+        actorId: 'actor-2',
+        actor: { email: 'other@example.com' },
+        action: 'auth.logout',
+        metadata: {},
+        createdAt,
+      },
+    ]);
+
+    await expect(service.list({
+      limit: 2,
+      cursor: 'cursor-id',
+      actorId: 'actor-1',
+      action: 'admin.user.role_changed',
+    })).resolves.toEqual({
+      entries: [
         {
           id: 'audit-1',
           actorId: 'actor-1',
-          actor: { email: 'admin@example.com' },
+          actorEmail: 'admin@example.com',
           action: 'admin.user.role_changed',
           metadata: { previousRole: 'Guest', newRole: 'Trader' },
-          createdAt,
+          createdAt: createdAt.toISOString(),
         },
         {
           id: 'audit-2',
           actorId: null,
-          actor: null,
+          actorEmail: null,
           action: 'auth.login.failed',
           metadata: { outcome: 'failure' },
-          createdAt,
+          createdAt: createdAt.toISOString(),
         },
-        {
-          id: 'audit-3',
-          actorId: 'actor-2',
-          actor: { email: 'other@example.com' },
-          action: 'auth.logout',
-          metadata: {},
-          createdAt,
-        },
-      ]);
-
-      await expect(service.list({
-        limit: 2,
-        cursor: 'cursor-id',
-        actorId: 'actor-1',
-        action: 'admin.user.role_changed',
-      })).resolves.toEqual({
-        entries: [
-          {
-            id: 'audit-1',
-            actorId: 'actor-1',
-            actorEmail: 'admin@example.com',
-            action: 'admin.user.role_changed',
-            metadata: { previousRole: 'Guest', newRole: 'Trader' },
-            createdAt: createdAt.toISOString(),
-          },
-          {
-            id: 'audit-2',
-            actorId: null,
-            actorEmail: null,
-            action: 'auth.login.failed',
-            metadata: { outcome: 'failure' },
-            createdAt: createdAt.toISOString(),
-          },
-        ],
-        nextCursor: 'audit-2',
-      });
-      expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
-        where: { actorId: 'actor-1', action: 'admin.user.role_changed' },
-        select: {
-          id: true,
-          actorId: true,
-          actor: { select: { email: true } },
-          action: true,
-          metadata: true,
-          createdAt: true,
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: 3,
-        cursor: { id: 'cursor-id' },
-        skip: 1,
-      });
+      ],
+      nextCursor: 'audit-2',
     });
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith({
+      where: { actorId: 'actor-1', action: 'admin.user.role_changed' },
+      select: {
+        id: true,
+        actorId: true,
+        actor: { select: { email: true } },
+        action: true,
+        metadata: true,
+        createdAt: true,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 3,
+      cursor: { id: 'cursor-id' },
+      skip: 1,
+    });
+  });
+
+  it('returns no cursor when the last page contains no extra entry', async () => {
+    const { service, prisma } = createService();
+    prisma.auditLog.findMany.mockResolvedValue([]);
+
+    await expect(service.list({ limit: 50 })).resolves.toEqual({
+      entries: [],
+      nextCursor: null,
+    });
+    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {},
+      take: 51,
+    }));
   });
 
   it('audits rejected operations without persisting exception messages', async () => {
