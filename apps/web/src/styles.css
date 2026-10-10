@@ -54,6 +54,22 @@ button { color: inherit; }
 .financial-control-confirm { align-items: center; color: var(--text-muted); display: flex; gap: 9px; }
 .financial-control-confirm input { accent-color: var(--brand-orange); }
 .financial-control-note { font-size: 0.78rem; margin-bottom: 0; }
+.user-management-panel { margin-bottom: 20px; padding: 20px 24px; }
+.user-management-panel h2 { margin: 0; }
+.admin-user-list { display: grid; }
+.admin-user-row { border-top: 1px solid rgba(255, 255, 255, 0.08); display: grid; gap: 12px; padding: 16px 0; }
+.admin-user-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; }
+.admin-user-heading > div { display: grid; gap: 4px; min-width: 0; }
+.admin-user-heading strong { overflow-wrap: anywhere; }
+.admin-user-heading .muted, .admin-users-note { font-size: 0.78rem; }
+.admin-user-actions { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; }
+.admin-user-actions > label { color: var(--text-muted); display: grid; flex: 1 1 220px; font-size: 0.84rem; gap: 6px; max-width: 360px; }
+.admin-user-actions select { background: rgba(4, 7, 9, 0.75); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; color: var(--text-primary); min-height: 42px; padding: 0 10px; }
+.admin-user-actions option { background: #090b0d; }
+.admin-user-actions .admin-user-confirm { align-items: center; display: flex; flex: 0 1 auto; gap: 8px; min-height: 42px; }
+.admin-user-confirm input { accent-color: var(--brand-orange); }
+.admin-users-more { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 14px; }
+.admin-users-note { margin-bottom: 0; }
 .wallet-panel, .security-card { padding: 25px; }
 .section-heading { align-items: center; display: flex; justify-content: space-between; }
 .section-heading h2, .security-card h2 { font-size: 1.45rem; margin: 0 0 18px; }

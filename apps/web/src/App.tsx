@@ -30,6 +30,11 @@ const FinancialControlsPanel = lazy(() =>
     default: module.FinancialControlsPanel,
   })),
 );
+const UserManagementPanel = lazy(() =>
+  import("./admin/UserManagementPanel").then((module) => ({
+    default: module.UserManagementPanel,
+  })),
+);
 
 export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -63,9 +68,14 @@ export function App() {
       </section>
       <AuthPanel />
       {user?.role === "SuperAdmin" && accessToken && (
-        <Suspense fallback={<GlassCard className="feature-loading">Loading administrator controls…</GlassCard>}>
-          <FinancialControlsPanel accessToken={accessToken} />
-        </Suspense>
+        <>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading administrator controls…</GlassCard>}>
+            <FinancialControlsPanel accessToken={accessToken} />
+          </Suspense>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading user management…</GlassCard>}>
+            <UserManagementPanel accessToken={accessToken} />
+          </Suspense>
+        </>
       )}
       <div className="dashboard-grid">
         <WalletPanel />
