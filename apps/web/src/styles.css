@@ -81,6 +81,8 @@ button { color: inherit; }
 .audit-entry-heading strong { overflow-wrap: anywhere; }
 .audit-entry-heading .muted, .audit-actor, .audit-log-note { font-size: 0.78rem; }
 .audit-entry details summary { color: var(--text-muted); cursor: pointer; font-size: 0.82rem; }
+.audit-entry-metadata[open] { max-width: 100%; overflow: hidden; }
+.audit-entry-metadata[open] summary { margin-bottom: 8px; }
 .audit-entry pre { background: rgba(4, 7, 9, 0.5); border-radius: 8px; font-size: 0.76rem; margin: 8px 0 0; max-height: 280px; overflow: auto; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .audit-load-more { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px; }
 .audit-log-note { margin-bottom: 0; }

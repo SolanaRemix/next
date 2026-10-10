@@ -44,9 +44,9 @@ async function errorMessage(response: Response): Promise<string> {
   const data: unknown = await response.json().catch(() => null);
   if (data && typeof data === "object" && "message" in data) {
     const message = (data as { message?: unknown }).message;
-    if (typeof message === "string") return message;
+    if (typeof message === "string") return message.trim().slice(0, 500);
     if (Array.isArray(message) && message.every((entry) => typeof entry === "string")) {
-      return message.join(" ");
+      return message.join(" ").trim().slice(0, 500);
     }
   }
   return "Administrator user request failed.";

@@ -84,7 +84,7 @@ export function AuditLogPanel({ accessToken }: { accessToken: string }) {
             Refresh
           </button>
         </div>
-        <p className="muted">Newest events first. Filters use exact action and actor ID matches.</p>
+        <p className="muted">Newest events first. Filters use exact action and actor ID matches. Metadata may contain sensitive operational details; access and export it only for authorized purposes.</p>
         <form className="audit-filter-form" onSubmit={(event) => void applyFilters(event)}>
           <label>
             Action
@@ -136,7 +136,7 @@ export function AuditLogPanel({ accessToken }: { accessToken: string }) {
           </div>
         )}
         {error && <p className="message message--error" role="alert">{error}</p>}
-        <p className="muted audit-log-note">Audit records are read-only here. Sensitive request bodies and credentials are not displayed as raw request data.</p>
+        <p className="muted audit-log-note">Audit records are read-only here. Metadata is not rendered as executable markup, but may contain sensitive operational details. Do not copy or share it outside authorized channels.</p>
       </section>
     </GlassCard>
   );
@@ -162,7 +162,7 @@ function AuditEntryCard({ entry }: { entry: AuditLogEntry }) {
       <p className="muted audit-actor">
         Actor: {entry.actorEmail ?? "System / unknown"}{entry.actorId ? ` · ${entry.actorId}` : ""}
       </p>
-      <details>
+      <details className="audit-entry-metadata">
         <summary>Event metadata</summary>
         <pre>{JSON.stringify(entry.metadata, null, 2)}</pre>
       </details>

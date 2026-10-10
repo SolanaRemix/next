@@ -17,7 +17,7 @@ async function errorMessage(response: Response): Promise<string> {
   const data: unknown = await response.json().catch(() => null);
   if (data && typeof data === "object" && "message" in data) {
     const message = (data as { message?: unknown }).message;
-    if (typeof message === "string") return message;
+    if (typeof message === "string") return message.trim().slice(0, 500);
   }
   return "Financial execution control request failed.";
 }

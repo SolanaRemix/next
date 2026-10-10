@@ -113,7 +113,7 @@ export function FinancialControlsPanel({ accessToken }: { accessToken: string })
                     checked={confirmEnable}
                     onChange={(event) => setConfirmEnable(event.target.checked)}
                   />
-                  I confirm that enabling financial execution is intentional.
+                  I confirm enabling the global financial execution control is intentional.
                 </label>
               )}
               <FlashButton

@@ -125,7 +125,7 @@ export function UserManagementPanel({ accessToken }: { accessToken: string }) {
 
   async function changeStatus(target: AdminUser) {
     const nextStatus = target.accountStatus === "Active" ? "Restricted" : "Active";
-    if (nextStatus === "Restricted" && !confirmRestrict[target.id]) return;
+    if (nextStatus === "Restricted" && (target.id === currentUser?.id || !confirmRestrict[target.id])) return;
     setBusyUserId(target.id);
     setError(null);
     setNotice(null);
@@ -248,7 +248,7 @@ export function UserManagementPanel({ accessToken }: { accessToken: string }) {
                           [target.id]: event.target.checked,
                         }))}
                       />
-                      Confirm restriction
+                      Confirm restriction for {target.email}
                     </label>
                   )}
                   <FlashButton
