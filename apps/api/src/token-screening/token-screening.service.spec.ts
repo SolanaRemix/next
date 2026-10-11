@@ -21,7 +21,10 @@ const baselineSignals = {
 };
 
 function stubProvider(body: unknown, status = 200) {
-  const fetch = vi.fn(async () => Response.json(body, { status }));
+  const fetch = vi.fn(async (
+    _input: string | URL | Request,
+    _init?: RequestInit,
+  ) => Response.json(body, { status }));
   vi.stubGlobal('fetch', fetch);
   return fetch;
 }

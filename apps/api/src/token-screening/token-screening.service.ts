@@ -83,7 +83,7 @@ function assessRisk(
   if (signals.honeypot === true) {
     return { riskScore: 100, riskLevel: 'critical', indicators };
   }
-  if (signals.honeypot === null || signalCoverage(signals) < 6) {
+  if (signals.honeypot === null || signalCoverage(signals) < Object.keys(signals).length) {
     return { riskScore: null, riskLevel: 'unknown', indicators };
   }
 
@@ -91,7 +91,7 @@ function assessRisk(
     100,
     weightedSignals.reduce((sum, [key, concerningValue, weight]) =>
       sum + (signals[key] === concerningValue ? weight : 0), 0) +
-    [signals.buyTaxPercent, signals.sellTaxPercent].reduce((sum, tax) => {
+    [signals.buyTaxPercent, signals.sellTaxPercent].reduce<number>((sum, tax) => {
       if (tax === null) return sum;
       return sum + (tax > 10 ? 20 : tax > 5 ? 10 : tax > 0 ? 5 : 0);
     }, 0),
