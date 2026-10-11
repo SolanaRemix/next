@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screenEvmToken } from "./tokenScreeningClient";
+import { screenEvmToken, screenSolanaToken } from "./tokenScreeningClient";
 
 const address = "0x2222222222222222222222222222222222222222";
 const validResponse = {
@@ -29,6 +29,35 @@ const validResponse = {
   indicators: [],
   asOf: "2026-10-11T00:00:00.000Z",
   disclaimer: "Not a safety guarantee.",
+} as const;
+const solanaMint = "So11111111111111111111111111111111111111112";
+const validSolanaResponse = {
+  network: "solana-mainnet",
+  tokenAddress: solanaMint,
+  source: "GoPlus Solana beta",
+  riskScore: null,
+  riskLevel: "unknown",
+  observedSignals: 1,
+  totalSignals: 14,
+  signals: {
+    mintable: false,
+    freezable: null,
+    closable: null,
+    balanceMutable: null,
+    metadataMutable: null,
+    transferFeeEnabled: null,
+    transferFeeUpgradable: null,
+    transferHookPresent: null,
+    maliciousTransferHook: null,
+    transferHookUpgradable: null,
+    defaultAccountFrozen: null,
+    defaultAccountStateUpgradable: null,
+    nonTransferable: null,
+    trustedToken: null,
+  },
+  indicators: [],
+  asOf: "2026-10-11T00:00:00.000Z",
+  disclaimer: "Beta data is not a safety guarantee.",
 } as const;
 
 describe("screenEvmToken", () => {
@@ -87,5 +116,25 @@ describe("screenEvmToken", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("Aborted", "AbortError"); }));
     await expect(screenEvmToken("1", address, "access-token"))
       .rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("requests Solana beta screening and validates its distinct risk signal contract", async () => {
+    const fetch = vi.fn(async () => Response.json(validSolanaResponse));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await screenSolanaToken(solanaMint, "access-token");
+    const [input, options] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+
+    expect(result).toMatchObject({ source: "GoPlus Solana beta", riskLevel: "unknown" });
+    expect(input.pathname).toBe("/api/token-screening/solana");
+    expect(input.searchParams.get("mint")).toBe(solanaMint);
+    expect(options.headers).toHaveProperty("authorization");
+
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      ...validSolanaResponse,
+      signals: { mintable: "unknown" },
+    })));
+    await expect(screenSolanaToken(solanaMint, "access-token"))
+      .rejects.toThrow(/invalid response/i);
   });
 });

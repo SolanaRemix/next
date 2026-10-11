@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { EvmTokenRiskScreeningResponse, EvmTokenRiskSignals } from "@next/types";
+import type {
+  EvmTokenRiskScreeningResponse,
+  EvmTokenRiskSignals,
+  SolanaTokenRiskScreeningResponse,
+  SolanaTokenRiskSignals,
+} from "@next/types";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
-import { screenEvmToken } from "./tokenScreeningClient";
+import { screenEvmToken, screenSolanaToken } from "./tokenScreeningClient";
 
 export interface TokenScreeningPanelProps {
   accessToken: string | null;
@@ -36,12 +41,35 @@ const booleanSignalLabels: ReadonlyArray<[BooleanSignalKey, string]> = [
   ["slippageModifiable", "Slippage modifiable"],
 ];
 
+type SolanaBooleanSignalKey = {
+  [Key in keyof SolanaTokenRiskSignals]: SolanaTokenRiskSignals[Key] extends boolean | null ? Key : never;
+}[keyof SolanaTokenRiskSignals];
+
+const solanaBooleanSignalLabels: ReadonlyArray<[SolanaBooleanSignalKey, string]> = [
+  ["mintable", "Mint authority active"],
+  ["freezable", "Freeze authority active"],
+  ["closable", "Program closable"],
+  ["balanceMutable", "Balances modifiable"],
+  ["metadataMutable", "Metadata mutable"],
+  ["transferFeeEnabled", "Transfer fee enabled"],
+  ["transferFeeUpgradable", "Transfer fee changeable"],
+  ["transferHookPresent", "Transfer hook present"],
+  ["maliciousTransferHook", "Malicious hook reported"],
+  ["transferHookUpgradable", "Hook configuration changeable"],
+  ["defaultAccountFrozen", "Accounts default frozen"],
+  ["defaultAccountStateUpgradable", "Default state changeable"],
+  ["nonTransferable", "Non-transferable"],
+  ["trustedToken", "Provider trusted-token label"],
+];
+
 function signalText(value: boolean | null): string {
   if (value === null) return "Unknown";
-  return value ? "Yes" : "No";
+  return value ? "Yes / active" : "No / inactive";
 }
 
-function riskTone(level: EvmTokenRiskScreeningResponse["riskLevel"]): "green" | "orange" | "red" | "neutral" {
+type ScreeningResult = EvmTokenRiskScreeningResponse | SolanaTokenRiskScreeningResponse;
+
+function riskTone(level: ScreeningResult["riskLevel"]): "green" | "orange" | "red" | "neutral" {
   if (level === "low") return "green";
   if (level === "medium") return "orange";
   if (level === "high" || level === "critical") return "red";
@@ -49,9 +77,9 @@ function riskTone(level: EvmTokenRiskScreeningResponse["riskLevel"]): "green" | 
 }
 
 export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
-  const [chainId, setChainId] = useState<string>("1");
+  const [network, setNetwork] = useState("1");
   const [tokenAddress, setTokenAddress] = useState("");
-  const [result, setResult] = useState<EvmTokenRiskScreeningResponse | null>(null);
+  const [result, setResult] = useState<ScreeningResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const requestController = useRef<AbortController | null>(null);
@@ -64,7 +92,7 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
       requestController.current?.abort();
       requestController.current = null;
     };
-  }, [accessToken]);
+  }, [accessToken, network]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,7 +104,10 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
     const controller = new AbortController();
     requestController.current = controller;
     try {
-      setResult(await screenEvmToken(chainId, tokenAddress.trim(), accessToken, controller.signal));
+      const screening = network === "solana"
+        ? screenSolanaToken(tokenAddress.trim(), accessToken, controller.signal)
+        : screenEvmToken(network, tokenAddress.trim(), accessToken, controller.signal);
+      setResult(await screening);
     } catch (cause) {
       if (!controller.signal.aborted) {
         setError(cause instanceof Error ? cause.message : "Unable to screen this token.");
@@ -89,13 +120,16 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
     }
   }
 
-  const canSubmit = accessToken !== null && /^0x[a-fA-F0-9]{40}$/.test(tokenAddress.trim());
+  const isSolana = network === "solana";
+  const canSubmit = accessToken !== null && (isSolana
+    ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(tokenAddress.trim())
+    : /^0x[a-fA-F0-9]{40}$/.test(tokenAddress.trim()));
 
   return (
     <GlassCard className="token-screening-panel" flashOnUpdate={result !== null}>
       <div className="section-heading">
         <div>
-          <p className="eyebrow">EVM · CONTRACT INDICATORS</p>
+          <p className="eyebrow">MULTI-CHAIN · CONTRACT INDICATORS</p>
           <h2>Token screening</h2>
         </div>
         <GlowBadge tone={result ? riskTone(result.riskLevel) : "orange"}>
@@ -108,21 +142,29 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
       </p>
       <form className="token-screening-form" onSubmit={(event) => void submit(event)}>
         <label>
-          EVM network
-          <select value={chainId} onChange={(event) => setChainId(event.target.value)}>
-            {networks.map((network) => (
-              <option key={network.chainId} value={network.chainId}>{network.label}</option>
+          Network
+          <select
+            value={network}
+            onChange={(event) => {
+              setNetwork(event.target.value);
+              setResult(null);
+              setError(null);
+            }}
+          >
+            {networks.map((item) => (
+              <option key={item.chainId} value={item.chainId}>{item.label}</option>
             ))}
+            <option value="solana">Solana Mainnet</option>
           </select>
         </label>
         <label>
-          Token contract address
+          {isSolana ? "Token mint address" : "Token contract address"}
           <input
             autoComplete="off"
             inputMode="text"
-            maxLength={42}
-            pattern="0x[a-fA-F0-9]{40}"
-            placeholder="0x…"
+            maxLength={isSolana ? 44 : 42}
+            pattern={isSolana ? "[1-9A-HJ-NP-Za-km-z]{32,44}" : "0x[a-fA-F0-9]{40}"}
+            placeholder={isSolana ? "Base58 mint address" : "0x…"}
             value={tokenAddress}
             onChange={(event) => setTokenAddress(event.target.value)}
             required
@@ -140,7 +182,9 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
               <p className="eyebrow">PROVIDER · {result.source}</p>
               <h3>{result.riskScore === null ? "Assessment unavailable" : `Risk score · ${result.riskScore}/100`}</h3>
               <small className="muted">
-                {networks.find((network) => network.chainId === result.chainId)?.label ?? `Chain ${result.chainId}`}
+                {result.source === "GoPlus Solana beta"
+                  ? "Solana Mainnet"
+                  : networks.find((item) => item.chainId === result.chainId)?.label ?? `Chain ${result.chainId}`}
                 {" · "}
                 <code>{result.tokenAddress}</code>
               </small>
@@ -155,16 +199,23 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
             ? <ul className="token-screening-indicators">{result.indicators.map((indicator) => <li key={indicator}>{indicator}</li>)}</ul>
             : result.riskLevel === "low" && <p className="muted">No concerning signals were reported in the available data.</p>}
           <dl className="token-screening-signals">
-            {booleanSignalLabels.map(([key, label]) => {
-                return (
+            {result.source === "GoPlus"
+              ? <>
+                  {booleanSignalLabels.map(([key, label]) => (
+                    <div key={key}>
+                      <dt>{label}</dt>
+                      <dd>{signalText(result.signals[key])}</dd>
+                    </div>
+                  ))}
+                  <div><dt>Buy tax</dt><dd>{result.signals.buyTaxPercent === null ? "Unknown" : `${result.signals.buyTaxPercent}%`}</dd></div>
+                  <div><dt>Sell tax</dt><dd>{result.signals.sellTaxPercent === null ? "Unknown" : `${result.signals.sellTaxPercent}%`}</dd></div>
+                </>
+              : solanaBooleanSignalLabels.map(([key, label]) => (
                   <div key={key}>
                     <dt>{label}</dt>
                     <dd>{signalText(result.signals[key])}</dd>
                   </div>
-              );
-            })}
-            <div><dt>Buy tax</dt><dd>{result.signals.buyTaxPercent === null ? "Unknown" : `${result.signals.buyTaxPercent}%`}</dd></div>
-            <div><dt>Sell tax</dt><dd>{result.signals.sellTaxPercent === null ? "Unknown" : `${result.signals.sellTaxPercent}%`}</dd></div>
+                ))}
           </dl>
           <small className="muted">Updated {new Date(result.asOf).toLocaleString()}</small>
           <p className="wallet-disclaimer">{result.disclaimer}</p>

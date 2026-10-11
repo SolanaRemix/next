@@ -3,12 +3,16 @@ import type {
   EvmTokenRiskLevel,
   EvmTokenRiskScreeningResponse,
   EvmTokenRiskSignals,
+  SolanaTokenRiskScreeningResponse,
+  SolanaTokenRiskSignals,
 } from '@next/types';
 
 const requestTimeoutMs = 8_000;
 const supportedChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
 const contractAddressPattern = /^0x[a-fA-F0-9]{40}$/;
+const solanaMintPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const disclaimer = 'Risk indicators are provider-reported heuristics, may be incomplete or inaccurate, and are not a safety guarantee or financial advice.';
+const solanaDisclaimer = 'GoPlus labels this Solana endpoint beta. Indicators may be incomplete or inaccurate and are not a safety guarantee or financial advice.';
 
 type RawData = Record<string, unknown>;
 
@@ -113,6 +117,96 @@ function normalizeChainId(chainId: string): string | null {
   return supportedChainIds.has(normalized) ? normalized : null;
 }
 
+function parseSolanaStatus(value: unknown): boolean | null {
+  return isRecord(value) ? parseBoolean(value.status) : null;
+}
+
+function parseSolanaSignals(token: RawData): SolanaTokenRiskSignals {
+  const transferHook = token.transfer_hook;
+  const hookRecords = Array.isArray(transferHook) && transferHook.every(isRecord)
+    ? transferHook
+    : null;
+  const currentFee = isRecord(token.transfer_fee) && isRecord(token.transfer_fee.current_fee_rate)
+    ? token.transfer_fee.current_fee_rate.fee_rate
+    : undefined;
+  const feeRate = typeof currentFee === 'string' || typeof currentFee === 'number'
+    ? Number(currentFee)
+    : Number.NaN;
+  const defaultState = token.default_account_state;
+
+  return {
+    mintable: parseSolanaStatus(token.mintable),
+    freezable: parseSolanaStatus(token.freezable),
+    closable: parseSolanaStatus(token.closable),
+    balanceMutable: parseSolanaStatus(token.balance_mutable_authority),
+    metadataMutable: parseSolanaStatus(token.metadata_mutable),
+    transferFeeEnabled: Number.isFinite(feeRate) && feeRate >= 0 && feeRate <= 1
+      ? feeRate > 0
+      : null,
+    transferFeeUpgradable: parseSolanaStatus(token.transfer_fee_upgradable),
+    transferHookPresent: hookRecords ? hookRecords.length > 0 : null,
+    maliciousTransferHook: hookRecords
+      ? hookRecords.length === 0
+        ? false
+        : hookRecords.every((hook) => parseBoolean(hook.malicious_address) !== null)
+          ? hookRecords.some((hook) => parseBoolean(hook.malicious_address) === true)
+          : null
+      : null,
+    transferHookUpgradable: parseSolanaStatus(token.transfer_hook_upgradable),
+    defaultAccountFrozen: defaultState === '0' || defaultState === '1' || defaultState === '2'
+      ? defaultState === '2'
+      : null,
+    defaultAccountStateUpgradable: parseSolanaStatus(token.default_account_state_upgradable),
+    nonTransferable: parseBoolean(token.none_transferable),
+    trustedToken: parseBoolean(token.trusted_token),
+  };
+}
+
+function assessSolanaRisk(
+  signals: SolanaTokenRiskSignals,
+): { riskScore: number | null; riskLevel: EvmTokenRiskLevel; indicators: string[] } {
+  const weightedSignals: Array<[keyof SolanaTokenRiskSignals, boolean, number, string]> = [
+    ['mintable', true, 10, 'Mint authority is active'],
+    ['freezable', true, 30, 'Freeze authority is active'],
+    ['closable', true, 55, 'Token program can be closed'],
+    ['balanceMutable', true, 60, 'Authority can modify token balances'],
+    ['metadataMutable', true, 10, 'Token metadata is mutable'],
+    ['transferFeeEnabled', true, 10, 'Transfers currently incur a fee'],
+    ['transferFeeUpgradable', true, 15, 'Transfer fee can be changed'],
+    ['transferHookPresent', true, 15, 'Token has a transfer hook'],
+    ['maliciousTransferHook', true, 100, 'Provider flagged a transfer hook as malicious'],
+    ['transferHookUpgradable', true, 15, 'Transfer hook configuration can be changed'],
+    ['defaultAccountFrozen', true, 50, 'New token accounts default to frozen'],
+    ['defaultAccountStateUpgradable', true, 10, 'Default account state can be changed'],
+    ['nonTransferable', true, 100, 'Token is non-transferable'],
+  ];
+  const indicators = weightedSignals
+    .filter(([key, concerningValue]) => signals[key] === concerningValue)
+    .map(([, , , indicator]) => indicator);
+
+  if (signals.maliciousTransferHook === true || signals.nonTransferable === true) {
+    return { riskScore: 100, riskLevel: 'critical', indicators };
+  }
+  if (Object.values(signals).some((value) => value === null)) {
+    return { riskScore: null, riskLevel: 'unknown', indicators };
+  }
+
+  const score = Math.min(
+    100,
+    weightedSignals.reduce((sum, [key, concerningValue, weight]) =>
+      sum + (signals[key] === concerningValue ? weight : 0), 0) +
+      (signals.trustedToken === false ? 5 : 0),
+  );
+  const riskLevel: EvmTokenRiskLevel = score >= 75
+    ? 'critical'
+    : score >= 50
+      ? 'high'
+      : score >= 20
+        ? 'medium'
+        : 'low';
+  return { riskScore: score, riskLevel, indicators };
+}
+
 @Injectable()
 export class TokenScreeningService {
   async screenEvmToken(
@@ -158,6 +252,46 @@ export class TokenScreeningService {
       signals,
       asOf: new Date().toISOString(),
       disclaimer,
+    };
+  }
+
+  async screenSolanaToken(mint: string): Promise<SolanaTokenRiskScreeningResponse> {
+    if (!solanaMintPattern.test(mint)) {
+      throw new BadRequestException('Provide a valid Solana token mint address.');
+    }
+
+    const normalizedMint = mint;
+    const url = new URL('https://api.gopluslabs.io/api/v1/solana/token_security');
+    url.searchParams.set('contract_addresses', normalizedMint);
+
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
+    } catch {
+      throw new ServiceUnavailableException('Solana token security provider is unavailable.');
+    }
+    if (!response.ok) {
+      throw new ServiceUnavailableException('Solana token security provider is unavailable.');
+    }
+
+    const payload: unknown = await response.json().catch(() => null);
+    if (!isRecord(payload) || payload.code !== 1 || !isRecord(payload.result)) {
+      throw new ServiceUnavailableException('Solana token security provider returned invalid data.');
+    }
+    const tokenResult = Object.entries(payload.result)
+      .find(([address]) => address === normalizedMint)?.[1];
+    const signals = isRecord(tokenResult) ? parseSolanaSignals(tokenResult) : parseSolanaSignals({});
+
+    return {
+      network: 'solana-mainnet',
+      tokenAddress: normalizedMint,
+      source: 'GoPlus Solana beta',
+      ...assessSolanaRisk(signals),
+      observedSignals: Object.values(signals).filter((value) => value !== null).length,
+      totalSignals: Object.keys(signals).length,
+      signals,
+      asOf: new Date().toISOString(),
+      disclaimer: solanaDisclaimer,
     };
   }
 }

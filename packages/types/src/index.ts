@@ -243,4 +243,35 @@ export interface EvmTokenRiskScreeningResponse {
   disclaimer: string;
 }
 
+export interface SolanaTokenRiskSignals {
+  mintable: boolean | null;
+  freezable: boolean | null;
+  closable: boolean | null;
+  balanceMutable: boolean | null;
+  metadataMutable: boolean | null;
+  transferFeeEnabled: boolean | null;
+  transferFeeUpgradable: boolean | null;
+  transferHookPresent: boolean | null;
+  maliciousTransferHook: boolean | null;
+  transferHookUpgradable: boolean | null;
+  defaultAccountFrozen: boolean | null;
+  defaultAccountStateUpgradable: boolean | null;
+  nonTransferable: boolean | null;
+  trustedToken: boolean | null;
+}
+
+export interface SolanaTokenRiskScreeningResponse {
+  network: "solana-mainnet";
+  tokenAddress: string;
+  source: "GoPlus Solana beta";
+  riskScore: number | null;
+  riskLevel: EvmTokenRiskLevel;
+  observedSignals: number;
+  totalSignals: number;
+  signals: SolanaTokenRiskSignals;
+  indicators: string[];
+  asOf: string;
+  disclaimer: string;
+}
+
 export type EvmPortfolioPricesResponse = PortfolioPricesResponse;

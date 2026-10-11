@@ -3,6 +3,7 @@ import { BadRequestException, ServiceUnavailableException } from '@nestjs/common
 import { TokenScreeningService } from './token-screening.service.js';
 
 const tokenAddress = '0x2222222222222222222222222222222222222222';
+const solanaMint = 'So11111111111111111111111111111111111111112';
 const baselineSignals = {
   is_honeypot: '0',
   is_open_source: '1',
@@ -159,5 +160,115 @@ describe('TokenScreeningService', () => {
     expect(response.signals.honeypot).toBeNull();
     expect(response.signals.buyTaxPercent).toBeNull();
     expect(response.signals.sellTaxPercent).toBeNull();
+  });
+
+  it('screens Solana mints with beta endpoint and derives risk from extension authorities', async () => {
+    const providerSignals = {
+      mintable: { status: '0' },
+      freezable: { status: '0' },
+      closable: { status: '0' },
+      balance_mutable_authority: { status: '0' },
+      metadata_mutable: { status: '0' },
+      transfer_fee: { current_fee_rate: { fee_rate: '0' } },
+      transfer_fee_upgradable: { status: '0' },
+      transfer_hook: [],
+      transfer_hook_upgradable: { status: '0' },
+      default_account_state: '1',
+      default_account_state_upgradable: { status: '0' },
+      none_transferable: '0',
+      trusted_token: 1,
+    };
+    const fetch = stubProvider({
+      code: 1,
+      message: 'OK',
+      result: { [solanaMint]: providerSignals },
+    });
+
+    const response = await new TokenScreeningService().screenSolanaToken(solanaMint);
+
+    expect(response).toMatchObject({
+      network: 'solana-mainnet',
+      tokenAddress: solanaMint,
+      source: 'GoPlus Solana beta',
+      riskScore: 0,
+      riskLevel: 'low',
+      observedSignals: 14,
+      totalSignals: 14,
+      signals: {
+        mintable: false,
+        freezable: false,
+        transferFeeEnabled: false,
+        transferHookPresent: false,
+        defaultAccountFrozen: false,
+        trustedToken: true,
+      },
+    });
+    expect(response.disclaimer).toMatch(/beta/i);
+    const [input] = fetch.mock.calls[0]!;
+    const url = new URL(String(input));
+    expect(url.pathname).toBe('/api/v1/solana/token_security');
+    expect(url.searchParams.get('contract_addresses')).toBe(solanaMint);
+  });
+
+  it('flags dangerous Solana token capabilities and non-transferable tokens as critical', async () => {
+    const providerSignals = {
+      mintable: { status: '1' },
+      freezable: { status: '1' },
+      closable: { status: '0' },
+      balance_mutable_authority: { status: '0' },
+      metadata_mutable: { status: '0' },
+      transfer_fee: { current_fee_rate: { fee_rate: '0.02' } },
+      transfer_fee_upgradable: { status: '1' },
+      transfer_hook: [{ address: 'Hook1111111111111111111111111111111111111', malicious_address: 1 }],
+      transfer_hook_upgradable: { status: '1' },
+      default_account_state: '2',
+      default_account_state_upgradable: { status: '1' },
+      none_transferable: '1',
+      trusted_token: 0,
+    };
+    stubProvider({ code: 1, result: { [solanaMint]: providerSignals } });
+
+    const response = await new TokenScreeningService().screenSolanaToken(solanaMint);
+
+    expect(response).toMatchObject({
+      riskScore: 100,
+      riskLevel: 'critical',
+      signals: {
+        mintable: true,
+        freezable: true,
+        transferFeeEnabled: true,
+        transferHookPresent: true,
+        maliciousTransferHook: true,
+        defaultAccountFrozen: true,
+        nonTransferable: true,
+      },
+    });
+    expect(response.indicators).toContain('Provider flagged a transfer hook as malicious');
+    expect(response.indicators).toContain('Token is non-transferable');
+  });
+
+  it('leaves Solana screening unknown when beta-provider signals are incomplete', async () => {
+    stubProvider({ code: 1, result: { [solanaMint]: { mintable: { status: '0' } } } });
+
+    const response = await new TokenScreeningService().screenSolanaToken(solanaMint);
+
+    expect(response).toMatchObject({
+      riskScore: null,
+      riskLevel: 'unknown',
+      observedSignals: 1,
+      totalSignals: 14,
+      signals: { mintable: false, freezable: null },
+    });
+  });
+
+  it('rejects invalid Solana mints and fails closed on provider errors', async () => {
+    const fetch = stubProvider({ code: 1, result: {} });
+    await expect(new TokenScreeningService().screenSolanaToken('not-a-mint'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(fetch).not.toHaveBeenCalled();
+
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ code: 0 }, { status: 200 })));
+    await expect(new TokenScreeningService().screenSolanaToken(solanaMint))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

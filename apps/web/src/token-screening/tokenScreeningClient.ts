@@ -1,6 +1,8 @@
 import type {
   EvmTokenRiskScreeningResponse,
   EvmTokenRiskSignals,
+  SolanaTokenRiskScreeningResponse,
+  SolanaTokenRiskSignals,
 } from "@next/types";
 
 const defaultApiUrl = "http://localhost:3001/api";
@@ -59,19 +61,54 @@ function isScreeningResponse(value: unknown): value is EvmTokenRiskScreeningResp
     typeof value.disclaimer === "string";
 }
 
-export async function screenEvmToken(
-  chainId: string,
-  tokenAddress: string,
+const solanaSignalKeys = [
+  "mintable",
+  "freezable",
+  "closable",
+  "balanceMutable",
+  "metadataMutable",
+  "transferFeeEnabled",
+  "transferFeeUpgradable",
+  "transferHookPresent",
+  "maliciousTransferHook",
+  "transferHookUpgradable",
+  "defaultAccountFrozen",
+  "defaultAccountStateUpgradable",
+  "nonTransferable",
+  "trustedToken",
+] as const satisfies readonly (keyof SolanaTokenRiskSignals)[];
+
+function isSolanaSignals(value: unknown): value is SolanaTokenRiskSignals {
+  return isRecord(value) && solanaSignalKeys.every((key) => isSignal(value[key]));
+}
+
+function isSolanaScreeningResponse(value: unknown): value is SolanaTokenRiskScreeningResponse {
+  return isRecord(value) &&
+    value.network === "solana-mainnet" &&
+    typeof value.tokenAddress === "string" &&
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.tokenAddress) &&
+    value.source === "GoPlus Solana beta" &&
+    (typeof value.riskScore === "number" && Number.isFinite(value.riskScore) &&
+      value.riskScore >= 0 && value.riskScore <= 100 || value.riskScore === null) &&
+    ["unknown", "low", "medium", "high", "critical"].includes(String(value.riskLevel)) &&
+    typeof value.observedSignals === "number" && Number.isInteger(value.observedSignals) &&
+    value.observedSignals >= 0 &&
+    typeof value.totalSignals === "number" && Number.isInteger(value.totalSignals) &&
+    value.totalSignals === 14 && value.observedSignals <= value.totalSignals &&
+    isSolanaSignals(value.signals) &&
+    Array.isArray(value.indicators) &&
+    value.indicators.every((indicator) => typeof indicator === "string") &&
+    typeof value.asOf === "string" &&
+    typeof value.disclaimer === "string";
+}
+
+async function fetchScreening(
+  url: URL,
   accessToken: string,
   signal?: AbortSignal,
-): Promise<EvmTokenRiskScreeningResponse> {
-  const baseUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
-
+): Promise<unknown> {
   let response: Response;
   try {
-    const url = new URL(`${baseUrl.replace(/\/+$/, "")}/token-screening/evm`);
-    url.searchParams.set("chainId", chainId);
-    url.searchParams.set("tokenAddress", tokenAddress);
     response = await fetch(url, {
       headers: { authorization: "Bearer " + accessToken },
       signal,
@@ -88,7 +125,36 @@ export async function screenEvmToken(
       : "Token screening request was rejected.";
     throw new Error(message);
   }
+  return data;
+}
+
+export async function screenEvmToken(
+  chainId: string,
+  tokenAddress: string,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<EvmTokenRiskScreeningResponse> {
+  const baseUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
+  const url = new URL(`${baseUrl.replace(/\/+$/, "")}/token-screening/evm`);
+  url.searchParams.set("chainId", chainId);
+  url.searchParams.set("tokenAddress", tokenAddress);
+  const data = await fetchScreening(url, accessToken, signal);
   if (!isScreeningResponse(data)) {
+    throw new Error("Token screening service returned an invalid response.");
+  }
+  return data;
+}
+
+export async function screenSolanaToken(
+  mint: string,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<SolanaTokenRiskScreeningResponse> {
+  const baseUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
+  const url = new URL(`${baseUrl.replace(/\/+$/, "")}/token-screening/solana`);
+  url.searchParams.set("mint", mint);
+  const data = await fetchScreening(url, accessToken, signal);
+  if (!isSolanaScreeningResponse(data)) {
     throw new Error("Token screening service returned an invalid response.");
   }
   return data;
