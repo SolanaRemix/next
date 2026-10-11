@@ -20,6 +20,11 @@ const SolanaMarketPanel = lazy(() =>
     default: module.SolanaMarketPanel,
   })),
 );
+const TokenScreeningPanel = lazy(() =>
+  import("./token-screening/TokenScreeningPanel").then((module) => ({
+    default: module.TokenScreeningPanel,
+  })),
+);
 const SolanaSwapPanel = lazy(() =>
   import("./swaps/SolanaSwapPanel").then((module) => ({
     default: module.SolanaSwapPanel,
@@ -120,6 +125,11 @@ export function App() {
       <section className="perpetual-section" aria-label="Solana token markets">
         <Suspense fallback={<GlassCard className="feature-loading">Loading Solana market data…</GlassCard>}>
           <SolanaMarketPanel accessToken={marketToken} />
+        </Suspense>
+      </section>
+      <section className="perpetual-section" aria-label="EVM token contract screening">
+        <Suspense fallback={<GlassCard className="feature-loading">Loading token screening…</GlassCard>}>
+          <TokenScreeningPanel accessToken={marketToken} />
         </Suspense>
       </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>
