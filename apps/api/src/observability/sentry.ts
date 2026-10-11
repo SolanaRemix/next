@@ -4,15 +4,22 @@ import type { ErrorEvent } from '@sentry/nestjs';
 const requestIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const safeErrorTypePattern = /^[A-Za-z][A-Za-z0-9_$]{0,63}$/;
 
-function getRequestId(headers: Record<string, string> | undefined): string | undefined {
-  if (!headers) return undefined;
-  const requestId = Object.entries(headers)
-    .find(([name]) => name.toLowerCase() === 'x-request-id')?.[1];
+function getRequestId(requestId: string | undefined): string | undefined {
   return requestId && requestIdPattern.test(requestId) ? requestId.toLowerCase() : undefined;
 }
 
+function getRequestIdFromHeaders(headers: Record<string, string> | undefined): string | undefined {
+  if (!headers) return undefined;
+  const requestId = Object.entries(headers)
+    .find(([name]) => name.toLowerCase() === 'x-request-id')?.[1];
+  return getRequestId(requestId);
+}
+
 export function sanitizeSentryEvent(event: ErrorEvent): ErrorEvent {
-  const requestId = getRequestId(event.request?.headers);
+  const requestId = getRequestId(
+    typeof event.tags?.request_id === 'string' ? event.tags.request_id : undefined,
+  )
+    ?? getRequestIdFromHeaders(event.request?.headers);
   const exceptions = event.exception?.values ?? [];
 
   return {

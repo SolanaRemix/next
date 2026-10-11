@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ErrorEvent } from '@sentry/nestjs';
 import { sanitizeSentryEvent } from './sentry.js';
+import { HttpException, NotFoundException } from '@nestjs/common';
+import { isUnexpectedSentryException } from './sentry-exception.filter.js';
 
 describe('sanitizeSentryEvent', () => {
   it('keeps only a validated request ID and safe error type while stripping sensitive event data', () => {
@@ -72,5 +74,12 @@ describe('sanitizeSentryEvent', () => {
       exception: { values: [{ type: 'Error', value: 'Unhandled server error' }] },
       tags: {},
     });
+  });
+
+  it('captures only unhandled errors and server-side HTTP exceptions', () => {
+    expect(isUnexpectedSentryException(new Error('internal'))).toBe(true);
+    expect(isUnexpectedSentryException(new HttpException('unavailable', 503))).toBe(true);
+    expect(isUnexpectedSentryException(new NotFoundException())).toBe(false);
+    expect(isUnexpectedSentryException(new HttpException('invalid', 400))).toBe(false);
   });
 });

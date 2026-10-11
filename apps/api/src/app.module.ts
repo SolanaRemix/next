@@ -18,7 +18,7 @@ import { HealthModule } from './health/health.module.js';
 import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
-import { SentryGlobalFilter } from '@sentry/nestjs/setup';
+import { SentryExceptionFilter } from './observability/sentry-exception.filter.js';
 
 @Module({
   imports: [
@@ -43,7 +43,7 @@ import { SentryGlobalFilter } from '@sentry/nestjs/setup';
     ObservabilityModule,
   ],
   providers: [
-    { provide: APP_FILTER, useClass: SentryGlobalFilter },
+    { provide: APP_FILTER, useClass: SentryExceptionFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: GeographicAccessGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
