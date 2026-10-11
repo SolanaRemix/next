@@ -57,10 +57,9 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
   const requestController = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!accessToken) {
-      setResult(null);
-      setError(null);
-    }
+    setResult(null);
+    setError(null);
+    setLoading(false);
     return () => {
       requestController.current?.abort();
       requestController.current = null;
@@ -140,6 +139,11 @@ export function TokenScreeningPanel({ accessToken }: TokenScreeningPanelProps) {
             <div>
               <p className="eyebrow">PROVIDER · {result.source}</p>
               <h3>{result.riskScore === null ? "Assessment unavailable" : `Risk score · ${result.riskScore}/100`}</h3>
+              <small className="muted">
+                {networks.find((network) => network.chainId === result.chainId)?.label ?? `Chain ${result.chainId}`}
+                {" · "}
+                <code>{result.tokenAddress}</code>
+              </small>
             </div>
             <GlowBadge tone={riskTone(result.riskLevel)}>{result.riskLevel.toUpperCase()}</GlowBadge>
           </div>
