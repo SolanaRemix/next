@@ -19,6 +19,7 @@ import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.modul
 import { AuditModule } from './audit/audit.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
 import { SentryExceptionFilter } from './observability/sentry-exception.filter.js';
+import { TokenScreeningModule } from './token-screening/token-screening.module.js';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { SentryExceptionFilter } from './observability/sentry-exception.filter.j
     FinancialControlsModule,
     HealthModule,
     PortfolioPricesModule,
+    TokenScreeningModule,
     SwapsModule,
     AuditModule,
     ObservabilityModule,

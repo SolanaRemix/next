@@ -210,4 +210,37 @@ export interface PortfolioPricesResponse {
   asOf: string;
 }
 
+export type EvmTokenRiskLevel = "unknown" | "low" | "medium" | "high" | "critical";
+
+export interface EvmTokenRiskSignals {
+  honeypot: boolean | null;
+  openSource: boolean | null;
+  proxy: boolean | null;
+  mintable: boolean | null;
+  ownershipRecoverable: boolean | null;
+  ownerCanChangeBalance: boolean | null;
+  hiddenOwner: boolean | null;
+  selfDestruct: boolean | null;
+  externalCall: boolean | null;
+  blacklisted: boolean | null;
+  transferPausable: boolean | null;
+  slippageModifiable: boolean | null;
+  buyTaxPercent: number | null;
+  sellTaxPercent: number | null;
+}
+
+export interface EvmTokenRiskScreeningResponse {
+  chainId: string;
+  tokenAddress: string;
+  source: "GoPlus";
+  riskScore: number | null;
+  riskLevel: EvmTokenRiskLevel;
+  observedSignals: number;
+  totalSignals: number;
+  signals: EvmTokenRiskSignals;
+  indicators: string[];
+  asOf: string;
+  disclaimer: string;
+}
+
 export type EvmPortfolioPricesResponse = PortfolioPricesResponse;
