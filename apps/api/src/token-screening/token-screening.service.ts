@@ -183,6 +183,9 @@ function assessSolanaRisk(
   const indicators = weightedSignals
     .filter(([key, concerningValue]) => signals[key] === concerningValue)
     .map(([, , , indicator]) => indicator);
+  if (signals.trustedToken === false) {
+    indicators.push('Token is not labeled trusted by the provider');
+  }
 
   if (signals.maliciousTransferHook === true || signals.nonTransferable === true) {
     return { riskScore: 100, riskLevel: 'critical', indicators };

@@ -245,6 +245,7 @@ describe('TokenScreeningService', () => {
     });
     expect(response.indicators).toContain('Provider flagged a transfer hook as malicious');
     expect(response.indicators).toContain('Token is non-transferable');
+    expect(response.indicators).toContain('Token is not labeled trusted by the provider');
   });
 
   it('leaves Solana screening unknown when beta-provider signals are incomplete', async () => {
