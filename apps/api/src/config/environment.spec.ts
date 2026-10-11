@@ -61,6 +61,31 @@ describe('validateEnvironment', () => {
     })).toThrow(/OTEL_SERVICE_NAME/);
   });
 
+  it('accepts an optional Sentry DSN and requires HTTPS in production', () => {
+    expect(validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: 'https://publickey@sentry.example.com/123',
+    })).toMatchObject({ SENTRY_DSN: 'https://publickey@sentry.example.com/123' });
+    expect(validateEnvironment({ ...validConfig, SENTRY_DSN: '' })).toMatchObject({ SENTRY_DSN: '' });
+    expect(() => validateEnvironment({
+      ...validConfig,
+      NODE_ENV: 'production',
+      SENTRY_DSN: 'http://publickey@sentry.example.com/123',
+    })).toThrow(/SENTRY_DSN/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: '******sentry.example.com/123',
+    })).toThrow(/SENTRY_DSN/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: 'https://publickey@sentry.example.com/123?token=value',
+    })).toThrow(/SENTRY_DSN/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: 42,
+    })).toThrow(/SENTRY_DSN/);
+  });
+
   it('requires a valid Redis URL in production and accepts TLS URLs', () => {
     expect(() => validateEnvironment({ ...validConfig, NODE_ENV: 'production' }))
       .toThrow(/REDIS_URL is required/);

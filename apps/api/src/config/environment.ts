@@ -98,6 +98,29 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
   ) {
     throw new Error('OTEL_SERVICE_NAME must be 1-128 alphanumeric, dot, underscore, or hyphen characters.');
   }
+  const sentryDsn = config.SENTRY_DSN;
+  if (sentryDsn !== undefined && sentryDsn !== '') {
+    if (typeof sentryDsn !== 'string') {
+      throw new Error('SENTRY_DSN must be a valid HTTP(S) DSN.');
+    }
+    try {
+      const endpoint = new URL(sentryDsn);
+      if (
+        !['http:', 'https:'].includes(endpoint.protocol) ||
+        !endpoint.hostname ||
+        !endpoint.username ||
+        endpoint.password ||
+        endpoint.pathname === '/' ||
+        endpoint.search ||
+        endpoint.hash ||
+        (config.NODE_ENV === 'production' && endpoint.protocol !== 'https:')
+      ) {
+        throw new Error();
+      }
+    } catch {
+      throw new Error('SENTRY_DSN must be an HTTP(S) DSN without a password, query data, or fragment.');
+    }
+  }
   const redisUrl = config.REDIS_URL;
   if (config.NODE_ENV === 'production' && typeof redisUrl !== 'string') {
     throw new Error('REDIS_URL is required in production.');

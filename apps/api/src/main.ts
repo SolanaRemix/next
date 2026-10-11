@@ -4,11 +4,13 @@ import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
 import { createRequestLoggingMiddleware } from './observability/request-logging.middleware.js';
 import { startTelemetry } from './observability/telemetry.js';
+import { startSentry } from './observability/sentry.js';
 import { validateEnvironment } from './config/environment.js';
 
 async function bootstrap(): Promise<void> {
   validateEnvironment(process.env);
   await startTelemetry();
+  startSentry();
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.use(createRequestLoggingMiddleware());

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { RedisThrottlerStorage } from './throttling/redis-throttler.storage.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -18,6 +18,7 @@ import { HealthModule } from './health/health.module.js';
 import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
+import { SentryGlobalFilter } from '@sentry/nestjs/setup';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { ObservabilityModule } from './observability/observability.module.js';
     ObservabilityModule,
   ],
   providers: [
+    { provide: APP_FILTER, useClass: SentryGlobalFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: GeographicAccessGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
