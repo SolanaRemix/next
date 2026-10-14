@@ -80,8 +80,8 @@ Set server variables in `apps/api/.env` for local development or in the deployme
 | `SENTRY_DSN` | API | Optional | Optional error reporting DSN; production requires HTTPS. |
 | `VITE_API_URL` | Web build | Optional; defaults to `http://localhost:3001/api` | Optional API base URL compiled into the web bundle. Docker Compose builds with `/api`. |
 | `VITE_SOLANA_RPC_URL` | Web build | Optional; defaults to Solana mainnet public RPC | Optional browser-side Solana wallet/read RPC URL. This is separate from the API RPC allowlist. |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Docker Compose | Required by Compose | Required Compose database initialization settings; use unique credentials. |
-| `REDIS_PASSWORD` | Docker Compose | Required by Compose | Required Compose Redis password; URL-encode special characters if used in connection values. |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Docker Compose | Required by Compose | Required Compose database initialization settings; use unique credentials and a URL-safe password because Compose embeds it in `DATABASE_URL`. |
+| `REDIS_PASSWORD` | Docker Compose | Required by Compose | Required Compose Redis password; use a URL-safe random value because Compose embeds it in the API's Redis URL. |
 | `BOOTSTRAP_ADMIN_EMAIL` | One-time API script | Required only when running bootstrap | Email of an already registered account to promote to the first SuperAdmin; do not expose as an API variable or public endpoint. |
 
 See [`.env.example`](.env.example) and [`apps/api/.env.example`](apps/api/.env.example) for the checked-in variable lists and sample values. Do not commit populated environment files.
@@ -129,7 +129,7 @@ Global request validation rejects unknown DTO fields. Global throttling defaults
 
 ## Security model and limitations
 
-- Non-custodial: the application does not request or store private keys or recovery phrases. EVM wallet actions are approved by the connected wallet. Solana swap execution forwards a locally signed transaction to Jupiter; the API does not possess the signing key.
+- Non-custodial: the application does not request or store private keys or recovery phrases. EVM transactions are approved by the connected wallet. Solana swap execution forwards a locally signed transaction to Jupiter; the API does not possess the signing key.
 - Fail-closed operation: production requires PostgreSQL, a 32-byte JWT secret, Redis database 0, all configured private RPC URLs and their exact-host allowlist, and the LI.FI key. Shared Redis failures do not silently fall back to per-instance rate limits.
 - The global financial execution control is database-backed and initialized disabled. SuperAdmins can update it with an audited reason. It blocks new execution admissions, not transactions already handed to a wallet or already submitted.
 - Refresh-token values are kept in HttpOnly cookies and only SHA-256 hashes are persisted. Account password hashes use Argon2id. Account restrictions and sensitive administrative/control actions are audited.

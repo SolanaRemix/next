@@ -20,7 +20,7 @@ flowchart TB
   subgraph Shared
     Types["packages/types"]
     UI["packages/ui"]
-    Config["packages/config"]
+    Config["packages/config · shared theme tokens"]
   end
   Web --> API
   Web --> Wallet
@@ -32,7 +32,6 @@ flowchart TB
   API --> External
   Web -. imports .-> Types
   Web -. imports .-> UI
-  UI -. imports .-> Config
 ```
 
 ## Workspaces
@@ -43,7 +42,7 @@ flowchart TB
 | `apps/api` | NestJS API, validation, authentication/RBAC, Prisma persistence, Redis throttling/cache/circuits, RPC reads, provider integrations, auditing, health, and observability. |
 | `packages/types` | Shared TypeScript types and the runtime user-role constant. |
 | `packages/ui` | Shared React `GlassCard`, `FlashButton`, and `GlowBadge` components and exports. |
-| `packages/config` | Shared theme-token exports consumed by UI code. |
+| `packages/config` | Shared theme-token export. `@next/ui` declares this package as a dependency, but its current components do not import those tokens. |
 
 The API applies the `/api` prefix, global DTO validation, CORS restricted to the configured web origin, rate limiting, geographic-access policy, JWT authentication, and role guards. `@Public()` routes opt out of JWT enforcement; health endpoints also skip throttling and geographic access. Role checks are hierarchical. See [`API.md`](API.md) for routes and [`OPERATIONS.md`](OPERATIONS.md) for runtime configuration.
 

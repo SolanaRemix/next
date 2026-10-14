@@ -14,7 +14,7 @@ This application does not integrate KYC, AML, sanctions, phishing, abuse, or leg
 - EVM wallet actions request wallet approval in the browser. The EVM swap order API returns the 0x order details needed by the client wallet; it does not sign or broadcast that transaction. Settlement is checked against the configured RPC.
 - For Solana swaps, the API obtains an order from Jupiter and returns an unsigned transaction to the client. The connected wallet signs locally. The API accepts the signed transaction and forwards it to Jupiter's execute endpoint; this relay does not give the API custody of the signing key.
 - LI.FI may return transaction data upstream, but `/api/bridges/quote` only returns normalized estimate and route metadata. It does not expose that transaction data or offer bridge execution.
-- Portfolio, market, price, allowance, and screening operations are read-only. Native transfers and allowance revocations are requested through a connected wallet and require user approval.
+- API portfolio, market, price, allowance-discovery, and screening endpoints are read-only. Native transfers and allowance revocations are requested through a connected wallet and require user approval.
 
 Always verify the network, recipient, token, amount, and fees shown by the wallet before approving. Simulations and preflight checks cannot guarantee the final result because chain state and provider estimates can change.
 
