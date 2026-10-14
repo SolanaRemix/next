@@ -88,7 +88,7 @@ describe('EvmAllowanceDiscoveryService', () => {
   });
 
   it('drops approvals whose allowance has since been revoked', async () => {
-    installRpc('0x0');
+    installRpc(`0x${'0'.repeat(64)}`);
     const result = await createService().discover('0x1', owner, [token]);
     expect(result.approvals).toHaveLength(0);
   });

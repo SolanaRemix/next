@@ -36,11 +36,17 @@ function isResponse(
     || value.approvals.length > 50 || !value.approvals.every(isApproval)
     || typeof value.asOf !== "string" || !Number.isFinite(Date.parse(value.asOf))) return false;
   const requestedTokens = new Set(request.tokenAddresses.map((address) => address.toLowerCase()));
-  return value.approvals.every((approval) => (
+  const approvals = value.approvals as DiscoveredEvmAllowance[];
+  const scannedFromBlock = value.scannedFromBlock as string;
+  const scannedToBlock = value.scannedToBlock as string;
+  const from = BigInt(scannedFromBlock);
+  const to = BigInt(scannedToBlock);
+  if (from > to || to - from + 1n !== BigInt(value.scannedBlockCount as number)) return false;
+  return approvals.every((approval) => (
     requestedTokens.has(approval.tokenAddress.toLowerCase())
     && BigInt(approval.allowanceRaw) > 0n
-    && BigInt(approval.lastApprovalBlock) >= BigInt(value.scannedFromBlock)
-    && BigInt(approval.lastApprovalBlock) <= BigInt(value.scannedToBlock)
+    && BigInt(approval.lastApprovalBlock) >= BigInt(scannedFromBlock)
+    && BigInt(approval.lastApprovalBlock) <= BigInt(scannedToBlock)
   ));
 }
 

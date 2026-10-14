@@ -50,6 +50,13 @@ function parseHexQuantity(value: unknown): bigint {
   return BigInt(value);
 }
 
+function parseUintData(value: unknown): bigint {
+  if (typeof value !== 'string' || !/^0x[0-9a-f]{64}$/i.test(value)) {
+    throw new Error('RPC returned an invalid allowance value.');
+  }
+  return BigInt(value);
+}
+
 function decodeAddressTopic(value: unknown): string {
   const topic = parseHex(value, 32);
   if (!/^0{24}[0-9a-f]{40}$/.test(topic)) throw new Error('RPC returned an invalid approval spender.');
@@ -85,8 +92,7 @@ function decodeSymbol(value: unknown): string {
 }
 
 function parseDecimals(value: unknown): number {
-  parseHex(value, 32);
-  const decimals = Number(BigInt(value as string));
+  const decimals = Number(BigInt(`0x${parseHex(value, 32)}`));
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
     throw new Error('RPC returned unsupported token precision.');
   }
@@ -165,7 +171,7 @@ export class EvmAllowanceDiscoveryService {
           throw new Error('RPC returned an invalid approval log.');
         }
         const tokenAddress = typeof rawLog.address === 'string' ? rawLog.address.toLowerCase() : '';
-        if (!knownTokens.has(tokenAddress) || rawLog.topics[0] !== approvalTopic
+        if (!knownTokens.has(tokenAddress) || `0x${parseHex(rawLog.topics[0], 32)}` !== approvalTopic
           || parseHex(rawLog.topics[1], 32) !== owner.slice(2).toLowerCase().padStart(64, '0')) {
           throw new Error('RPC returned an unrelated approval log.');
         }
@@ -197,7 +203,7 @@ export class EvmAllowanceDiscoveryService {
         const allowanceData = '0xdd62ed3e'
           + owner.slice(2).toLowerCase().padStart(64, '0')
           + candidate.spender.slice(2).toLowerCase().padStart(64, '0');
-        const currentValue = parseHexQuantity(await this.rpc(rpcUrl, 'eth_call', [
+        const currentValue = parseUintData(await this.rpc(rpcUrl, 'eth_call', [
           { to: candidate.tokenAddress, data: allowanceData },
           'latest',
         ]));
