@@ -121,31 +121,59 @@ describe('RedisThrottlerStorage', () => {
       .resolves.toBeUndefined();
   });
 
-  it('shares quote-provider circuit state and opens it after the configured failure threshold', async () => {
+  it('claims normal provider attempts and only one half-open recovery probe', async () => {
     const providerHash = (await import('node:crypto'))
       .createHash('sha256').update('0x').digest('hex');
     const failuresKey = `test:throttle:quote-circuit:{${providerHash}}:failures`;
     const openKey = `test:throttle:quote-circuit:{${providerHash}}:open`;
-    const openCheck = createStorage('open');
-    await expect(openCheck.storage.isQuoteProviderCircuitOpen('0x')).resolves.toBe(true);
-    expect(openCheck.client.eval).toHaveBeenCalledWith(
-      "return redis.call('GET', KEYS[1])",
-      { keys: [openKey], arguments: [] },
+    const recoveryKey = `test:throttle:quote-circuit:{${providerHash}}:recovery`;
+    const probeKey = `test:throttle:quote-circuit:{${providerHash}}:probe`;
+    const normalAttempt = createStorage(1);
+    await expect(normalAttempt.storage.claimQuoteProviderAttempt('0x', 10_000))
+      .resolves.toBe(true);
+    expect(normalAttempt.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('SET'"),
+      { keys: [openKey, recoveryKey, probeKey], arguments: ['10000'] },
     );
+    const deniedProbe = createStorage(0);
+    await expect(deniedProbe.storage.claimQuoteProviderAttempt('0x', 10_000))
+      .resolves.toBe(false);
+  });
 
+  it('opens the provider circuit at threshold and immediately reopens it after a failed probe', async () => {
+    const providerHash = (await import('node:crypto'))
+      .createHash('sha256').update('0x').digest('hex');
+    const failuresKey = `test:throttle:quote-circuit:{${providerHash}}:failures`;
+    const openKey = `test:throttle:quote-circuit:{${providerHash}}:open`;
+    const recoveryKey = `test:throttle:quote-circuit:{${providerHash}}:recovery`;
+    const probeKey = `test:throttle:quote-circuit:{${providerHash}}:probe`;
     const failure = createStorage(1);
     await expect(failure.storage.recordQuoteProviderFailure('0x', 30_000, 5, 15_000))
       .resolves.toBe(true);
     expect(failure.client.eval).toHaveBeenCalledWith(
       expect.stringContaining("redis.call('INCR'"),
-      { keys: [failuresKey, openKey], arguments: ['30000', '5', '15000'] },
+      {
+        keys: [failuresKey, openKey, recoveryKey, probeKey],
+        arguments: ['30000', '5', '15000'],
+      },
+    );
+
+    const failedProbe = createStorage(1);
+    await expect(failedProbe.storage.recordQuoteProviderFailure('0x', 30_000, 5, 15_000))
+      .resolves.toBe(true);
+    expect(failedProbe.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining('EXISTS'),
+      {
+        keys: [failuresKey, openKey, recoveryKey, probeKey],
+        arguments: ['30000', '5', '15000'],
+      },
     );
 
     const success = createStorage(1);
     await expect(success.storage.recordQuoteProviderSuccess('0x')).resolves.toBeUndefined();
     expect(success.client.eval).toHaveBeenCalledWith(
-      "redis.call('DEL', KEYS[1]); return 1",
-      { keys: [failuresKey], arguments: [] },
+      "redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4]); return 1",
+      { keys: [failuresKey, openKey, recoveryKey, probeKey], arguments: [] },
     );
   });
 
@@ -153,7 +181,7 @@ describe('RedisThrottlerStorage', () => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const unavailable = createStorage();
     unavailable.client.eval.mockRejectedValue(new Error('connection lost'));
-    await expect(unavailable.storage.isQuoteProviderCircuitOpen('0x'))
+    await expect(unavailable.storage.claimQuoteProviderAttempt('0x', 10_000))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
     await expect(unavailable.storage.recordQuoteProviderFailure('0x', 30_000, 5, 15_000))
       .rejects.toBeInstanceOf(ServiceUnavailableException);

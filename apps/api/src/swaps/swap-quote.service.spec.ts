@@ -91,7 +91,7 @@ describe('SwapQuoteService', () => {
     const cache = {
       getQuoteCache,
       setQuoteCache,
-      isQuoteProviderCircuitOpen: vi.fn().mockResolvedValue(false),
+      claimQuoteProviderAttempt: vi.fn().mockResolvedValue(true),
       recordQuoteProviderSuccess: vi.fn().mockResolvedValue(undefined),
       recordQuoteProviderFailure: vi.fn().mockResolvedValue(false),
     } as unknown as RedisThrottlerStorage;
@@ -126,7 +126,7 @@ describe('SwapQuoteService', () => {
     const quoteService = new SwapQuoteService({
       getQuoteCache,
       setQuoteCache,
-      isQuoteProviderCircuitOpen: vi.fn().mockResolvedValue(false),
+      claimQuoteProviderAttempt: vi.fn().mockResolvedValue(true),
       recordQuoteProviderSuccess: vi.fn().mockResolvedValue(undefined),
       recordQuoteProviderFailure: vi.fn().mockResolvedValue(false),
     } as unknown as RedisThrottlerStorage);
@@ -149,8 +149,8 @@ describe('SwapQuoteService', () => {
   it('opens a failing provider circuit while continuing to return healthy aggregator quotes', async () => {
     process.env.ONEINCH_API_KEY = 'test-key';
     const failureCounts = new Map<string, number>();
-    const isQuoteProviderCircuitOpen = vi.fn(async (provider: string) =>
-      (failureCounts.get(provider) ?? 0) >= 5);
+    const claimQuoteProviderAttempt = vi.fn(async (provider: string) =>
+      (failureCounts.get(provider) ?? 0) < 5);
     const recordQuoteProviderFailure = vi.fn(async (provider: string) => {
       failureCounts.set(provider, (failureCounts.get(provider) ?? 0) + 1);
       return (failureCounts.get(provider) ?? 0) >= 5;
@@ -158,7 +158,7 @@ describe('SwapQuoteService', () => {
     const cache = {
       getQuoteCache: vi.fn().mockResolvedValue(null),
       setQuoteCache: vi.fn().mockResolvedValue(undefined),
-      isQuoteProviderCircuitOpen,
+      claimQuoteProviderAttempt,
       recordQuoteProviderSuccess: vi.fn().mockResolvedValue(undefined),
       recordQuoteProviderFailure,
     } as unknown as RedisThrottlerStorage;
@@ -206,7 +206,7 @@ describe('SwapQuoteService', () => {
 
     expect(zeroXFetch).toHaveBeenCalledTimes(5);
     expect(recordQuoteProviderFailure).toHaveBeenCalledTimes(5);
-    expect(isQuoteProviderCircuitOpen).toHaveBeenCalledWith('0x');
+    expect(claimQuoteProviderAttempt).toHaveBeenCalledWith('0x', 10_000);
     expect(result?.routes.map((route) => route.provider)).toEqual(['paraswap', '1inch']);
     expect(result?.unavailableProviders).toContain('0x');
     expect(spanRecords.some((span) => span.attributes['app.quote.outcome'] === 'success')).toBe(true);

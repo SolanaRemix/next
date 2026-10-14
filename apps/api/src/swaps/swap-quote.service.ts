@@ -19,6 +19,7 @@ const quoteCacheTtlMs = 3_000;
 const circuitFailureWindowMs = 30_000;
 const circuitFailureThreshold = 5;
 const circuitOpenDurationMs = 15_000;
+const circuitProbeLeaseMs = quoteTimeoutMs + 2_000;
 const providerNames: EvmQuoteProvider[] = ['0x', '1inch', 'paraswap'];
 const oneInchChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
 const zeroXChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
@@ -239,7 +240,10 @@ export class SwapQuoteService {
       async (span) => {
         let outcome = 'error';
         try {
-          if (await this.cache?.isQuoteProviderCircuitOpen(provider.name)) {
+          if (this.cache && !await this.cache.claimQuoteProviderAttempt(
+            provider.name,
+            circuitProbeLeaseMs,
+          )) {
             outcome = 'circuit_open';
             throw new Error('Quote provider circuit is open.');
           }

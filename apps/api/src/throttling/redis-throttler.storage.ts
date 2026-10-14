@@ -53,15 +53,33 @@ return { hits, ttl, 0, 0 }
 
 const READ_QUOTE_CACHE_SCRIPT = `return redis.call('GET', KEYS[1])`;
 const WRITE_QUOTE_CACHE_SCRIPT = `return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])`;
-const READ_QUOTE_CIRCUIT_SCRIPT = `return redis.call('GET', KEYS[1])`;
-const RECORD_QUOTE_CIRCUIT_SUCCESS_SCRIPT = `redis.call('DEL', KEYS[1]); return 1`;
+const CLAIM_QUOTE_PROVIDER_ATTEMPT_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 0
+end
+if redis.call('EXISTS', KEYS[2]) == 0 then
+  return 1
+end
+if redis.call('SET', KEYS[3], 'probe', 'PX', ARGV[1], 'NX') then
+  return 1
+end
+return 0
+`;
+const RECORD_QUOTE_CIRCUIT_SUCCESS_SCRIPT =
+  `redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4]); return 1`;
 const RECORD_QUOTE_CIRCUIT_FAILURE_SCRIPT = `
+if redis.call('EXISTS', KEYS[3]) == 1 and redis.call('EXISTS', KEYS[4]) == 1 then
+  redis.call('PSETEX', KEYS[2], ARGV[3], 'open')
+  redis.call('DEL', KEYS[1], KEYS[4])
+  return 1
+end
 local failures = redis.call('INCR', KEYS[1])
 if failures == 1 then
   redis.call('PEXPIRE', KEYS[1], ARGV[1])
 end
 if failures >= tonumber(ARGV[2]) then
   redis.call('PSETEX', KEYS[2], ARGV[3], 'open')
+  redis.call('SET', KEYS[3], 'recovering')
   redis.call('DEL', KEYS[1])
   return 1
 end
@@ -146,32 +164,31 @@ export class RedisThrottlerStorage
     }
   }
 
-  async isQuoteProviderCircuitOpen(provider: string): Promise<boolean> {
-    if (!this.client) return false;
-    const [, openKey] = this.quoteCircuitKeys(provider);
+  async claimQuoteProviderAttempt(provider: string, probeLeaseMs: number): Promise<boolean> {
+    if (!this.client) return true;
+    const [, openKey, recoveryKey, probeKey] = this.quoteCircuitKeys(provider);
     let result: unknown;
     try {
-      result = await this.client.eval(READ_QUOTE_CIRCUIT_SCRIPT, {
-        keys: [openKey],
-        arguments: [],
+      result = await this.client.eval(CLAIM_QUOTE_PROVIDER_ATTEMPT_SCRIPT, {
+        keys: [openKey, recoveryKey, probeKey],
+        arguments: [String(probeLeaseMs)],
       });
     } catch {
-      this.logger.error('Redis quote circuit read failed.');
+      this.logger.error('Redis quote circuit claim failed.');
       throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
     }
-    if (result === null || result === undefined) return false;
-    if (result === 'open') return true;
-    this.logger.error('Redis returned an invalid quote circuit state.');
+    if (result === 0 || result === 1) return result === 1;
+    this.logger.error('Redis returned an invalid quote circuit claim response.');
     throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
   }
 
   async recordQuoteProviderSuccess(provider: string): Promise<void> {
     if (!this.client) return;
-    const [failuresKey] = this.quoteCircuitKeys(provider);
+    const [failuresKey, openKey, recoveryKey, probeKey] = this.quoteCircuitKeys(provider);
     let result: unknown;
     try {
       result = await this.client.eval(RECORD_QUOTE_CIRCUIT_SUCCESS_SCRIPT, {
-        keys: [failuresKey],
+        keys: [failuresKey, openKey, recoveryKey, probeKey],
         arguments: [],
       });
     } catch {
@@ -191,11 +208,11 @@ export class RedisThrottlerStorage
     openDurationMs: number,
   ): Promise<boolean> {
     if (!this.client) return false;
-    const [failuresKey, openKey] = this.quoteCircuitKeys(provider);
+    const [failuresKey, openKey, recoveryKey, probeKey] = this.quoteCircuitKeys(provider);
     let result: unknown;
     try {
       result = await this.client.eval(RECORD_QUOTE_CIRCUIT_FAILURE_SCRIPT, {
-        keys: [failuresKey, openKey],
+        keys: [failuresKey, openKey, recoveryKey, probeKey],
         arguments: [
           String(failureWindowMs),
           String(failureThreshold),
@@ -211,12 +228,14 @@ export class RedisThrottlerStorage
     throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
   }
 
-  private quoteCircuitKeys(provider: string): [string, string] {
+  private quoteCircuitKeys(provider: string): [string, string, string, string] {
     const identity = createHash('sha256').update(provider, 'utf8').digest('hex');
     const hashTag = `{${identity}}`;
     return [
       `${this.namespace}:quote-circuit:${hashTag}:failures`,
       `${this.namespace}:quote-circuit:${hashTag}:open`,
+      `${this.namespace}:quote-circuit:${hashTag}:recovery`,
+      `${this.namespace}:quote-circuit:${hashTag}:probe`,
     ];
   }
 
