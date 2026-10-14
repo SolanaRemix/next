@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FlashButton, GlassCard, GlowBadge } from "@next/ui";
 import { useAuth } from "../auth/AuthContext";
 import { useWallet } from "./WalletContext";
@@ -21,6 +21,8 @@ import {
   removeTrackedAllowance,
 } from "./allowanceWatchlist";
 import type { TrackedAllowance } from "./allowanceWatchlist";
+import { discoverEvmAllowances } from "./allowanceDiscoveryClient";
+import type { EvmAllowanceDiscoveryResponse } from "@next/types";
 
 const roleRank = { Guest: 0, Viewer: 1, Trader: 2, EnterpriseAdmin: 3, SuperAdmin: 4 } as const;
 
@@ -39,6 +41,8 @@ export function WalletPanel() {
     transfer,
     clearError,
   } = useWallet();
+  const accountRef = useRef(account);
+  accountRef.current = account;
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [tokenAddress, setTokenAddress] = useState("");
@@ -48,6 +52,7 @@ export function WalletPanel() {
   const [allowanceTokenAddress, setAllowanceTokenAddress] = useState("");
   const [allowanceSpender, setAllowanceSpender] = useState("");
   const [busyAllowance, setBusyAllowance] = useState<string | null>(null);
+  const [discoveredAllowances, setDiscoveredAllowances] = useState<EvmAllowanceDiscoveryResponse | null>(null);
   const [transferSimulation, setTransferSimulation] = useState<NativeTransferSimulation | null>(null);
   const [portfolioPrices, setPortfolioPrices] = useState<PortfolioPricesResponse | null>(null);
   const [portfolioPriceError, setPortfolioPriceError] = useState<string | null>(null);
@@ -85,6 +90,7 @@ export function WalletPanel() {
 
   useEffect(() => {
     setTransferSimulation(null);
+    setDiscoveredAllowances(null);
     if (!account) {
       setTrackedTokens([]);
       setTrackedAllowances([]);
@@ -249,6 +255,53 @@ export function WalletPanel() {
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Unable to read allowances.";
       setAllowanceValues(Object.fromEntries(entries.map((entry) => [allowanceKey(entry), `Error: ${message}`])));
+    } finally {
+      setBusyAllowance(null);
+    }
+  }
+
+  async function discoverAllowances() {
+    if (!account || account.chain !== "evm" || !accessToken || trackedTokens.length === 0) return;
+    setBusyAllowance("discover");
+    setNotice(null);
+    setDiscoveredAllowances(null);
+    try {
+      const result = await discoverEvmAllowances({
+        chainId: account.chainId.toLowerCase(),
+        owner: account.address,
+        tokenAddresses: trackedTokens,
+      }, accessToken);
+      const activeAccount = accountRef.current;
+      if (!activeAccount || activeAccount.chain !== "evm"
+        || activeAccount.address.toLowerCase() !== account.address.toLowerCase()
+        || activeAccount.chainId.toLowerCase() !== account.chainId.toLowerCase()) return;
+      const additions = result.approvals
+        .map(({ tokenAddress, spender }) => ({
+          tokenAddress: tokenAddress.toLowerCase(),
+          spender: spender.toLowerCase(),
+        }))
+        .filter((entry) => !trackedAllowances.some((current) => (
+          current.tokenAddress === entry.tokenAddress && current.spender === entry.spender
+        )));
+      if (trackedAllowances.length + additions.length > 50) {
+        throw new Error("Discovered approvals exceed the 50-pair local watchlist limit. Remove entries before importing.");
+      }
+      let next = trackedAllowances;
+      for (const entry of additions) {
+        next = addTrackedAllowance(account, entry.tokenAddress, entry.spender);
+      }
+      setTrackedAllowances(next);
+      setAllowanceValues((current) => ({
+        ...current,
+        ...Object.fromEntries(result.approvals.map((entry) => [
+          allowanceKey({ tokenAddress: entry.tokenAddress.toLowerCase(), spender: entry.spender.toLowerCase() }),
+          entry.allowanceRaw,
+        ])),
+      }));
+      setDiscoveredAllowances(result);
+      setNotice(`Discovered ${result.approvals.length} currently active allowance(s) in the recent scan window.`);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "Unable to discover allowances.");
     } finally {
       setBusyAllowance(null);
     }
@@ -443,16 +496,35 @@ export function WalletPanel() {
             <section className="allowance-manager" aria-label="ERC-20 token allowances">
               <div className="section-heading">
                 <div><p className="eyebrow">APPROVAL SECURITY</p><h3>ERC-20 allowances</h3></div>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => void refreshAllowances()}
-                  disabled={busyAllowance !== null}
-                >
-                  Refresh
-                </button>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => void refreshAllowances()}
+                    disabled={busyAllowance !== null}
+                  >
+                    Refresh
+                  </button>
+                  <FlashButton
+                    type="button"
+                    onClick={() => void discoverAllowances()}
+                    disabled={busyAllowance !== null || trackedTokens.length === 0 || !accessToken
+                      || !user || roleRank[user.role] < roleRank.Viewer}
+                  >
+                    {busyAllowance === "discover" ? "Scanning…" : "Discover recent approvals"}
+                  </FlashButton>
+                </div>
               </div>
-              <p className="muted">Track a token and spender pair to read its allowance on this network. This is not automatic discovery; untracked approvals are not shown.</p>
+              <p className="muted">
+                Discovery checks the recent 5,000-block Approval-event window for manually tracked tokens and verifies
+                current allowances. Older approvals and unsupported RPC history are not included; review every spender.
+              </p>
+              {discoveredAllowances && (
+                <p className="muted" role="status">
+                  Scanned blocks {discoveredAllowances.scannedFromBlock}–{discoveredAllowances.scannedToBlock}
+                  {" "}({discoveredAllowances.scannedBlockCount} blocks). Results are not complete historical coverage.
+                </p>
+              )}
               {trackedAllowances.length === 0
                 ? <p className="muted">No token and spender pairs are tracked.</p>
                 : <div className="portfolio-list">

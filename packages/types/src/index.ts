@@ -51,6 +51,33 @@ export interface CrossChainPortfolioResponse {
   asOf: string;
 }
 
+export interface EvmAllowanceDiscoveryRequest {
+  chainId: string;
+  owner: string;
+  tokenAddresses: string[];
+}
+
+export interface DiscoveredEvmAllowance {
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  spender: string;
+  allowanceRaw: string;
+  allowance: string;
+  lastApprovalBlock: string;
+}
+
+export interface EvmAllowanceDiscoveryResponse {
+  chainId: string;
+  owner: string;
+  scannedFromBlock: string;
+  scannedToBlock: string;
+  scannedBlockCount: number;
+  completeHistory: false;
+  approvals: DiscoveredEvmAllowance[];
+  asOf: string;
+}
+
 export interface NativeTransferRequest {
   chain: WalletChain;
   to: string;
