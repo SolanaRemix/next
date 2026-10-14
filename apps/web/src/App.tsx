@@ -30,6 +30,11 @@ const SolanaSwapPanel = lazy(() =>
     default: module.SolanaSwapPanel,
   })),
 );
+const BridgeQuotePanel = lazy(() =>
+  import("./bridges/BridgeQuotePanel").then((module) => ({
+    default: module.BridgeQuotePanel,
+  })),
+);
 const FinancialControlsPanel = lazy(() =>
   import("./admin/FinancialControlsPanel").then((module) => ({
     default: module.FinancialControlsPanel,
@@ -128,6 +133,11 @@ export function App() {
             account={account}
             onConnectWallet={() => connectWallet("solana")}
           />
+        </Suspense>
+      </section>
+      <section className="perpetual-section" aria-label="Cross-chain bridge quote">
+        <Suspense fallback={<GlassCard className="feature-loading">Loading bridge quotes…</GlassCard>}>
+          <BridgeQuotePanel accessToken={swapToken} authenticated={user !== null} />
         </Suspense>
       </section>
       <section className="perpetual-section" aria-label="Solana token markets">

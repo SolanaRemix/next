@@ -21,6 +21,7 @@ import { ObservabilityModule } from './observability/observability.module.js';
 import { SentryExceptionFilter } from './observability/sentry-exception.filter.js';
 import { TokenScreeningModule } from './token-screening/token-screening.module.js';
 import { AggregatorControlsModule } from './aggregator-controls/aggregator-controls.module.js';
+import { BridgesModule } from './bridges/bridges.module.js';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { AggregatorControlsModule } from './aggregator-controls/aggregator-contr
     PortfolioPricesModule,
     TokenScreeningModule,
     AggregatorControlsModule,
+    BridgesModule,
     SwapsModule,
     AuditModule,
     ObservabilityModule,
