@@ -4,6 +4,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { createHash } from 'node:crypto';
 import type {
   EvmQuoteProvider,
@@ -225,6 +226,50 @@ export class SwapQuoteService {
     @Optional() private readonly cache?: RedisThrottlerStorage,
   ) {}
 
+  private async quoteFromProvider(
+    provider: QuoteProvider,
+    request: SwapQuoteRequest,
+  ): Promise<{ provider: EvmQuoteProvider; result: ProviderQuoteResult }> {
+    return trace.getTracer('mega-gods-prompt-next-api').startActiveSpan(
+      'swap.quote.provider',
+      {
+        kind: SpanKind.CLIENT,
+        attributes: { 'app.quote.provider': provider.name },
+      },
+      async (span) => {
+        let outcome = 'error';
+        try {
+          if (await this.cache?.isQuoteProviderCircuitOpen(provider.name)) {
+            outcome = 'circuit_open';
+            throw new Error('Quote provider circuit is open.');
+          }
+          let result: ProviderQuoteResult;
+          try {
+            result = await provider.quote(request);
+          } catch (error) {
+            outcome = 'failure';
+            await this.cache?.recordQuoteProviderFailure(
+              provider.name,
+              circuitFailureWindowMs,
+              circuitFailureThreshold,
+              circuitOpenDurationMs,
+            );
+            throw error;
+          }
+          await this.cache?.recordQuoteProviderSuccess(provider.name);
+          outcome = 'success';
+          return { provider: provider.name, result };
+        } finally {
+          span.setAttribute('app.quote.outcome', outcome);
+          if (outcome === 'failure' || outcome === 'error') {
+            span.setStatus({ code: SpanStatusCode.ERROR });
+          }
+          span.end();
+        }
+      },
+    );
+  }
+
   async quote(request: SwapQuoteRequest): Promise<SwapQuoteResponse> {
     if (request.sellToken.toLowerCase() === request.buyToken.toLowerCase()) {
       throw new BadRequestException('Sell and buy tokens must be different.');
@@ -242,25 +287,7 @@ export class SwapQuoteService {
       }
     }
     const outcomes = await Promise.allSettled(
-      this.providers.map(async (provider) => {
-        if (await this.cache?.isQuoteProviderCircuitOpen(provider.name)) {
-          throw new Error('Quote provider circuit is open.');
-        }
-        let result: ProviderQuoteResult;
-        try {
-          result = await provider.quote(request);
-        } catch (error) {
-          await this.cache?.recordQuoteProviderFailure(
-            provider.name,
-            circuitFailureWindowMs,
-            circuitFailureThreshold,
-            circuitOpenDurationMs,
-          );
-          throw error;
-        }
-        await this.cache?.recordQuoteProviderSuccess(provider.name);
-        return { provider: provider.name, result };
-      }),
+      this.providers.map((provider) => this.quoteFromProvider(provider, request)),
     );
     const routes: SwapRouteQuote[] = [];
     const succeeded = new Set<EvmQuoteProvider>();

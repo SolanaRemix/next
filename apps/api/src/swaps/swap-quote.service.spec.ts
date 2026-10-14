@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import type { Span, SpanOptions, Tracer } from '@opentelemetry/api';
 import { SwapQuoteService } from './swap-quote.service.js';
 import type { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js';
 
@@ -19,6 +21,7 @@ describe('SwapQuoteService', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     if (originalOneInchKey === undefined) delete process.env.ONEINCH_API_KEY;
     else process.env.ONEINCH_API_KEY = originalOneInchKey;
   });
@@ -160,6 +163,34 @@ describe('SwapQuoteService', () => {
       recordQuoteProviderFailure,
     } as unknown as RedisThrottlerStorage;
     const quoteService = new SwapQuoteService(cache);
+    const spanRecords: Array<{
+      attributes: Record<string, unknown>;
+      statusCodes: number[];
+      ended: boolean;
+    }> = [];
+    const startActiveSpan = vi.fn(async (
+      _name: string,
+      _options: SpanOptions,
+      callback: (span: Span) => Promise<unknown>,
+    ) => {
+      const record = { attributes: {}, statusCodes: [] as number[], ended: false };
+      spanRecords.push(record);
+      const span = {
+        setAttribute: vi.fn((key: string, value: unknown) => {
+          record.attributes[key] = value;
+        }),
+        setStatus: vi.fn((status: { code: number }) => {
+          record.statusCodes.push(status.code);
+        }),
+        end: vi.fn(() => {
+          record.ended = true;
+        }),
+      } as unknown as Span;
+      return callback(span);
+    });
+    vi.spyOn(trace, 'getTracer').mockReturnValue({
+      startActiveSpan,
+    } as unknown as Tracer);
     const zeroXFetch = vi.fn(async () => new Response('{}', { status: 503 }));
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
       const hostname = new URL(String(input)).hostname;
@@ -178,5 +209,14 @@ describe('SwapQuoteService', () => {
     expect(isQuoteProviderCircuitOpen).toHaveBeenCalledWith('0x');
     expect(result?.routes.map((route) => route.provider)).toEqual(['paraswap', '1inch']);
     expect(result?.unavailableProviders).toContain('0x');
+    expect(spanRecords.some((span) => span.attributes['app.quote.outcome'] === 'success')).toBe(true);
+    expect(spanRecords.some((span) => span.attributes['app.quote.outcome'] === 'failure')).toBe(true);
+    expect(spanRecords.some((span) => span.attributes['app.quote.outcome'] === 'circuit_open')).toBe(true);
+    expect(spanRecords.every((span) => span.ended)).toBe(true);
+    expect(spanRecords
+      .find((span) => span.attributes['app.quote.outcome'] === 'failure')
+      ?.statusCodes).toContain(SpanStatusCode.ERROR);
+    expect(JSON.stringify(spanRecords)).not.toContain(request.sellToken);
+    expect(JSON.stringify(spanRecords)).not.toContain(request.buyToken);
   });
 });
