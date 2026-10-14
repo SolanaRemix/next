@@ -160,6 +160,44 @@ export interface SwapQuoteResponse {
   quotedAt: string;
 }
 
+export interface CrossChainBridgeQuoteRequest {
+  fromChainId: number;
+  toChainId: number;
+  fromToken: string;
+  toToken: string;
+  fromAmount: string;
+  fromAddress: string;
+  toAddress: string;
+  slippageBps: number;
+}
+
+export interface CrossChainBridgeQuoteCost {
+  kind: "fee" | "gas";
+  name: string;
+  amount: string | null;
+  tokenSymbol: string | null;
+  amountUsd: string | null;
+}
+
+export interface CrossChainBridgeQuoteResponse {
+  provider: "LI.FI";
+  fromChainId: number;
+  toChainId: number;
+  fromToken: string;
+  toToken: string;
+  fromAmount: string;
+  toAmount: string;
+  minimumToAmount: string;
+  fromTokenSymbol: string;
+  toTokenSymbol: string;
+  routeTool: string;
+  routeToolName: string;
+  estimatedDurationSeconds: number | null;
+  costs: CrossChainBridgeQuoteCost[];
+  quotedAt: string;
+  disclaimer: string;
+}
+
 export interface EvmSwapOrderRequest extends SwapQuoteRequest {
   taker: string;
   idempotencyKey: string;
