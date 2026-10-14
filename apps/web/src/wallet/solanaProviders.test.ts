@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  Connection,
   Keypair,
+  Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
-import { signSolanaVersionedTransaction } from "./solanaProviders";
+import {
+  fetchSolanaTokenBalances,
+  sendSolanaNativeTransfer,
+  signSolanaVersionedTransaction,
+  subscribeSolanaAccountChanges,
+  simulateSolanaNativeTransfer,
+} from "./solanaProviders";
 
 const account = Keypair.generate();
 const walletAccount = {
@@ -77,5 +85,187 @@ describe("signSolanaVersionedTransaction", () => {
       signSolanaVersionedTransaction(walletAccount, "AQ=="),
     ).rejects.toThrow(/account changed/i);
     expect(signTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("subscribeSolanaAccountChanges", () => {
+  it("tracks account and disconnect events and removes provider listeners", () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const provider = {
+      publicKey: account.publicKey,
+      connect: vi.fn(async () => ({ publicKey: account.publicKey })),
+      disconnect: vi.fn(async () => undefined),
+      signAndSendTransaction: vi.fn(async () => "signature"),
+      on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(event, listener);
+      }),
+      removeListener: vi.fn((event: string) => {
+        listeners.delete(event);
+      }),
+    };
+    window.solana = provider;
+    const onChange = vi.fn();
+    const unsubscribe = subscribeSolanaAccountChanges(onChange);
+    const nextAccount = Keypair.generate().publicKey;
+
+    listeners.get("accountChanged")?.(nextAccount);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      address: nextAccount.toBase58(),
+      chain: "solana",
+      chainId: "mainnet-beta",
+    }));
+    listeners.get("accountChanged")?.(null);
+    expect(onChange).toHaveBeenLastCalledWith(null);
+
+    listeners.get("disconnect")?.();
+    expect(onChange).toHaveBeenLastCalledWith(null);
+    unsubscribe();
+    expect(listeners.size).toBe(0);
+    expect(provider.removeListener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("fetchSolanaTokenBalances", () => {
+  it("combines non-zero SPL and Token-2022 accounts by mint using exact integer arithmetic", async () => {
+    const mint = Keypair.generate().publicKey.toBase58();
+    const secondMint = Keypair.generate().publicKey.toBase58();
+    window.solana = {
+      publicKey: account.publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+    const request = vi.spyOn(Connection.prototype, "getParsedTokenAccountsByOwner")
+      .mockImplementation(async (_owner, filter) => ({
+        context: { slot: 1 },
+        value: "programId" in filter &&
+          filter.programId.toBase58() === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          ? [
+            { account: { data: { parsed: { info: {
+              mint,
+              tokenAmount: { amount: "1234567", decimals: 6 },
+            } } } } },
+            { account: { data: { parsed: { info: {
+              mint: secondMint,
+              tokenAmount: { amount: "0", decimals: 9 },
+            } } } } },
+          ]
+          : [{ account: { data: { parsed: { info: {
+            mint,
+            tokenAmount: { amount: "33", decimals: 6 },
+          } } } } }],
+      }) as never);
+
+    await expect(fetchSolanaTokenBalances(walletAccount)).resolves.toEqual([{
+      address: walletAccount.address,
+      chain: "solana",
+      asset: `${mint.slice(0, 4)}…${mint.slice(-4)}`,
+      amount: "1.2346",
+      decimals: 6,
+      tokenAddress: mint,
+      kind: "token",
+    }]);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects stale connected accounts and malformed token account data", async () => {
+    window.solana = {
+      publicKey: Keypair.generate().publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+    const request = vi.spyOn(Connection.prototype, "getParsedTokenAccountsByOwner");
+    await expect(fetchSolanaTokenBalances(walletAccount)).rejects.toThrow(/account changed/i);
+    expect(request).not.toHaveBeenCalled();
+
+    window.solana.publicKey = account.publicKey;
+    request.mockImplementation(async () => ({
+      context: { slot: 1 },
+      value: [{ account: { data: { parsed: { info: {} } } } }],
+    }) as never);
+    await expect(fetchSolanaTokenBalances(walletAccount)).rejects.toThrow(/invalid token amount/i);
+  });
+});
+
+describe("Solana native transfer simulation", () => {
+  const destination = Keypair.generate().publicKey.toBase58();
+  const transferRequest = {
+    chain: "solana" as const,
+    chainId: "mainnet-beta",
+    to: destination,
+    amount: "0.5",
+  };
+
+  function mockRpc(simulationError: unknown = null, balance = 2_000_000_000) {
+    vi.spyOn(Connection.prototype, "getLatestBlockhash").mockResolvedValue({
+      blockhash: Keypair.generate().publicKey.toBase58(),
+      lastValidBlockHeight: 100,
+    });
+    const simulate = vi.spyOn(Connection.prototype, "simulateTransaction").mockResolvedValue({
+      context: { slot: 1 },
+      value: { err: simulationError as never, logs: [], accounts: null, unitsConsumed: 200 },
+    });
+    vi.spyOn(Connection.prototype, "getFeeForMessage").mockResolvedValue({
+      context: { slot: 1 },
+      value: 5_000,
+    });
+    vi.spyOn(Connection.prototype, "getBalance").mockResolvedValue(balance);
+    return simulate;
+  }
+
+  it("simulates and estimates the fee before wallet submission, then re-simulates on send", async () => {
+    const simulate = mockRpc();
+    const signAndSendTransaction = vi.fn(async () => "1".repeat(64));
+    window.solana = {
+      publicKey: account.publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction,
+    };
+
+    await expect(simulateSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toMatchObject({
+      chain: "solana",
+      asset: "SOL",
+      recipient: destination,
+      amount: "0.5",
+      estimatedFee: "0.000005",
+      totalEstimatedDebit: "0.500005",
+    });
+    expect(signAndSendTransaction).not.toHaveBeenCalled();
+    const simulated = simulate.mock.calls[0]?.[0];
+    expect(simulated).toBeInstanceOf(Transaction);
+    if (simulated instanceof Transaction) {
+      expect(Array.from(simulated.instructions[0]?.data ?? [])).toEqual([
+        2, 0, 0, 0, 0, 0x65, 0xcd, 0x1d, 0, 0, 0, 0,
+      ]);
+    }
+
+    await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).resolves.toEqual({
+      chain: "solana",
+      transactionId: "1".repeat(64),
+      status: "submitted",
+    });
+    expect(simulate).toHaveBeenCalledTimes(2);
+    expect(signAndSendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not request wallet submission after simulation failure or an insufficient balance", async () => {
+    const signAndSendTransaction = vi.fn(async () => "1".repeat(64));
+    window.solana = {
+      publicKey: account.publicKey,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      signAndSendTransaction,
+    };
+    mockRpc({ InstructionError: [0, "Custom"] });
+    await expect(sendSolanaNativeTransfer(walletAccount, transferRequest)).rejects.toThrow(/simulation rejected/i);
+    expect(signAndSendTransaction).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+    window.solana.publicKey = account.publicKey;
+    mockRpc(null, 500_000_000);
+    await expect(simulateSolanaNativeTransfer(walletAccount, transferRequest)).rejects.toThrow(/insufficient SOL balance/i);
+    expect(signAndSendTransaction).not.toHaveBeenCalled();
   });
 });

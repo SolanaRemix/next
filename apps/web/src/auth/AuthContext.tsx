@@ -29,6 +29,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateAccessToken: (accessToken: string, expiresIn: number) => void;
   clearError: () => void;
 }
 
@@ -39,7 +40,14 @@ let refreshInFlight: Promise<SessionResponse | null> | null = null;
 function isSessionResponse(value: unknown): value is SessionResponse {
   if (!value || typeof value !== "object") return false;
   const data = value as Record<string, unknown>;
-  if (typeof data.accessToken !== "string" || typeof data.expiresIn !== "number") return false;
+  if (
+    typeof data.accessToken !== "string" ||
+    data.accessToken.length === 0 ||
+    typeof data.expiresIn !== "number" ||
+    !Number.isSafeInteger(data.expiresIn) ||
+    data.expiresIn < 1 ||
+    data.expiresIn > 900
+  ) return false;
   if (!data.user || typeof data.user !== "object") return false;
   const user = data.user as Record<string, unknown>;
   return typeof user.id === "string" &&
@@ -158,6 +166,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateAccessToken = useCallback((token: string, tokenExpiresIn: number) => {
+    setAccessToken(token);
+    setExpiresIn(tokenExpiresIn);
+  }, []);
+
   const value = useMemo<AuthContextValue>(() => ({
     accessToken,
     user,
@@ -166,8 +179,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     register,
     logout,
+    updateAccessToken,
     clearError: () => setError(null),
-  }), [accessToken, user, loading, error, login, register, logout]);
+  }), [accessToken, user, loading, error, login, register, logout, updateAccessToken]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

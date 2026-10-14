@@ -7,6 +7,18 @@ const validConfig = {
   WEB_ORIGIN: 'https://example.com',
 };
 
+const productionRpcConfig = {
+  NODE_ENV: 'production',
+  REDIS_URL: 'rediss://redis.example.com:6380',
+  LIFI_API_KEY: 'valid-production-test-key',
+  RPC_PRIVATE_HOSTS: 'solana.private.example,evm.private.example',
+  SOLANA_RPC_URL: 'https://solana.private.example/rpc',
+  ...Object.fromEntries(
+    ['1', '10', '56', '137', '8453', '42161', '43114']
+      .map((chainId) => [`EVM_RPC_URL_${chainId}`, 'https://evm.private.example/rpc']),
+  ),
+};
+
 describe('validateEnvironment', () => {
   it('accepts PostgreSQL configuration and a sufficiently strong JWT secret', () => {
     expect(validateEnvironment(validConfig)).toEqual(validConfig);
@@ -26,24 +38,91 @@ describe('validateEnvironment', () => {
       .toThrow(/WEB_ORIGIN/);
   });
 
+  it('validates OpenTelemetry collector URLs and service names', () => {
+    expect(validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example/otel',
+      OTEL_SERVICE_NAME: 'next-api.production',
+    })).toMatchObject({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example/otel' });
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'ftp://collector.example',
+    })).toThrow(/without credentials or query data/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example?attribute=value',
+    })).toThrow(/without credentials or query data/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://user@collector.example',
+    })).toThrow(/without credentials or query data/i);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      OTEL_SERVICE_NAME: 'invalid service name',
+    })).toThrow(/OTEL_SERVICE_NAME/);
+  });
+
+  it('accepts an optional Sentry DSN and requires HTTPS in production', () => {
+    expect(validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: 'https://publickey@sentry.example.com/123',
+    })).toMatchObject({ SENTRY_DSN: 'https://publickey@sentry.example.com/123' });
+    expect(validateEnvironment({ ...validConfig, SENTRY_DSN: '' })).toMatchObject({ SENTRY_DSN: '' });
+    expect(() => validateEnvironment({
+      ...validConfig,
+      NODE_ENV: 'production',
+      SENTRY_DSN: 'http://publickey@sentry.example.com/123',
+    })).toThrow(/SENTRY_DSN/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: '******sentry.example.com/123',
+    })).toThrow(/SENTRY_DSN/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: 'https://publickey@sentry.example.com/123?token=value',
+    })).toThrow(/SENTRY_DSN/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      SENTRY_DSN: 42,
+    })).toThrow(/SENTRY_DSN/);
+  });
+
   it('requires a valid Redis URL in production and accepts TLS URLs', () => {
     expect(() => validateEnvironment({ ...validConfig, NODE_ENV: 'production' }))
       .toThrow(/REDIS_URL is required/);
     expect(() => validateEnvironment({
       ...validConfig,
+      ...productionRpcConfig,
       NODE_ENV: 'production',
       REDIS_URL: 'https://redis.example.com',
     })).toThrow(/REDIS_URL/);
     expect(() => validateEnvironment({
       ...validConfig,
+      ...productionRpcConfig,
       NODE_ENV: 'production',
       REDIS_URL: 'redis://redis.example.com/1',
     })).toThrow(/REDIS_URL/);
     expect(validateEnvironment({
       ...validConfig,
-      NODE_ENV: 'production',
-      REDIS_URL: 'rediss://redis.example.com:6380',
+      ...productionRpcConfig,
     })).toMatchObject({ REDIS_URL: 'rediss://redis.example.com:6380' });
+  });
+
+  it('requires a well-formed LI.FI key in production', () => {
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      NODE_ENV: 'production',
+      LIFI_API_KEY: undefined,
+    })).toThrow(/LIFI_API_KEY is required/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      LIFI_API_KEY: 'invalid key',
+    })).toThrow(/printable non-space ASCII/);
+    expect(validateEnvironment({
+      ...validConfig,
+      LIFI_API_KEY: 'valid-development-key',
+    })).toMatchObject({ LIFI_API_KEY: 'valid-development-key' });
   });
 
   it('requires valid countries and trusted proxy CIDRs for geographic restrictions', () => {
@@ -79,9 +158,9 @@ describe('validateEnvironment', () => {
     })).toMatchObject({ SOLANA_RPC_URL: 'http://localhost:8899' });
     expect(() => validateEnvironment({
       ...validConfig,
+      ...productionRpcConfig,
       NODE_ENV: 'production',
       SOLANA_RPC_URL: 'http://localhost:8899',
-      REDIS_URL: 'rediss://redis.example.com:6380',
     })).toThrow(/SOLANA_RPC_URL/);
     expect(() => validateEnvironment({
       ...validConfig,
@@ -101,8 +180,8 @@ describe('validateEnvironment', () => {
     })).toThrow(/supported EVM chain/);
     expect(() => validateEnvironment({
     ...validConfig,
+    ...productionRpcConfig,
     NODE_ENV: 'production',
-    REDIS_URL: 'rediss://redis.example.com:6380',
     EVM_RPC_URL_1: 'http://localhost:8545',
     })).toThrow(/EVM_RPC_URL_1/);
     expect(() => validateEnvironment({
@@ -121,5 +200,30 @@ describe('validateEnvironment', () => {
     ...validConfig,
     EVM_CONFIRMATIONS_1: '1e2',
     })).toThrow(/between 2 and 1000/);
+  });
+
+  it('requires approved private RPCs for every production chain', () => {
+    expect(validateEnvironment({ ...validConfig, ...productionRpcConfig }))
+      .toMatchObject(productionRpcConfig);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      EVM_RPC_URL_56: undefined,
+    })).toThrow(/EVM_RPC_URL_56 is required/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com',
+    })).toThrow(/SOLANA_RPC_URL must use an approved private RPC hostname/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      RPC_PRIVATE_HOSTS: 'evm.private.example',
+    })).toThrow(/SOLANA_RPC_URL must use an approved private RPC hostname/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      RPC_PRIVATE_HOSTS: 'https://evm.private.example/rpc',
+    })).toThrow(/RPC_PRIVATE_HOSTS must contain hostnames only/);
   });
 });

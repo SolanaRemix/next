@@ -4,7 +4,7 @@ import { AccountStatus, UserRole } from '@prisma/client';
 import { JwtStrategy } from './jwt.strategy.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 
-function createStrategy(accountStatus: AccountStatus | null) {
+function createStrategy(accountStatus: AccountStatus | null, authVersion = 0) {
   const prisma = {
     user: {
       findFirst: vi.fn().mockResolvedValue(accountStatus ? {
@@ -12,6 +12,7 @@ function createStrategy(accountStatus: AccountStatus | null) {
         email: 'user@example.com',
         role: UserRole.Trader,
         accountStatus,
+        authVersion,
       } : null),
     },
   };
@@ -46,5 +47,31 @@ describe('JwtStrategy', () => {
     const deleted = createStrategy(null);
     await expect(deleted.strategy.validate({ sub: 'user-id', role: UserRole.Trader }))
       .rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('rejects access tokens issued before the account authentication version changed', async () => {
+    const { strategy } = createStrategy(AccountStatus.Active, 1);
+
+    await expect(strategy.validate({
+      sub: 'user-id',
+      role: UserRole.Trader,
+      authVersion: 0,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(strategy.validate({
+      sub: 'user-id',
+      role: UserRole.Trader,
+      authVersion: 1,
+    })).resolves.toMatchObject({ id: 'user-id' });
+  });
+
+  it('rejects malformed authentication-version claims before querying the account', async () => {
+    const { strategy, prisma } = createStrategy(AccountStatus.Active);
+
+    await expect(strategy.validate({
+      sub: 'user-id',
+      role: UserRole.Trader,
+      authVersion: -1,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
   });
 });

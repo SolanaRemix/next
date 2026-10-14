@@ -1,5 +1,55 @@
 import ipaddr from 'ipaddr.js';
 
+const supportedEvmChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
+const publicRpcHosts = new Set([
+  'api.mainnet-beta.solana.com',
+  'api.devnet.solana.com',
+  'api.testnet.solana.com',
+  'cloudflare-eth.com',
+  'ethereum-rpc.publicnode.com',
+  'optimism-rpc.publicnode.com',
+  'bsc-rpc.publicnode.com',
+  'polygon-bor-rpc.publicnode.com',
+  'base-rpc.publicnode.com',
+  'arbitrum-one-rpc.publicnode.com',
+  'avalanche-c-chain-rpc.publicnode.com',
+]);
+
+function parsePrivateRpcHosts(value: unknown): ReadonlySet<string> {
+  if (typeof value !== 'string') {
+    throw new Error('RPC_PRIVATE_HOSTS must list the approved private RPC hostnames.');
+  }
+  const hosts = value.split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+  if (hosts.length === 0) {
+    throw new Error('RPC_PRIVATE_HOSTS must list the approved private RPC hostnames.');
+  }
+  const parsedHosts = hosts.map((host) => {
+    try {
+      const endpoint = new URL(`https://${host}`);
+      if (
+        endpoint.hostname !== host ||
+        endpoint.pathname !== '/' ||
+        endpoint.search ||
+        endpoint.hash
+      ) throw new Error();
+      return endpoint.hostname;
+    } catch {
+      throw new Error('RPC_PRIVATE_HOSTS must contain hostnames only.');
+    }
+  });
+  return new Set(parsedHosts);
+}
+
+function assertPrivateRpc(
+  key: string,
+  endpoint: URL,
+  privateRpcHosts: ReadonlySet<string>,
+): void {
+  if (!privateRpcHosts.has(endpoint.hostname) || publicRpcHosts.has(endpoint.hostname)) {
+    throw new Error(`${key} must use an approved private RPC hostname.`);
+  }
+}
+
 export function validateEnvironment(config: Record<string, unknown>): Record<string, unknown> {
   const databaseUrl = config.DATABASE_URL;
   const jwtSecret = config.JWT_ACCESS_SECRET;
@@ -19,6 +69,57 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
   }
   if (typeof jwtSecret !== 'string' || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
     throw new Error('JWT_ACCESS_SECRET must contain at least 32 bytes.');
+  }
+  const otelEndpoint = config.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (otelEndpoint !== undefined) {
+    if (typeof otelEndpoint !== 'string') {
+      throw new Error('OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) URL.');
+    }
+    try {
+      const endpoint = new URL(otelEndpoint);
+      if (
+        !['http:', 'https:'].includes(endpoint.protocol) ||
+        !endpoint.hostname ||
+        endpoint.username ||
+        endpoint.password ||
+        endpoint.search ||
+        endpoint.hash
+      ) {
+        throw new Error();
+      }
+    } catch {
+      throw new Error('OTEL_EXPORTER_OTLP_ENDPOINT must be an HTTP(S) URL without credentials or query data.');
+    }
+  }
+  const otelServiceName = config.OTEL_SERVICE_NAME;
+  if (
+    otelServiceName !== undefined &&
+    (typeof otelServiceName !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(otelServiceName))
+  ) {
+    throw new Error('OTEL_SERVICE_NAME must be 1-128 alphanumeric, dot, underscore, or hyphen characters.');
+  }
+  const sentryDsn = config.SENTRY_DSN;
+  if (sentryDsn !== undefined && sentryDsn !== '') {
+    if (typeof sentryDsn !== 'string') {
+      throw new Error('SENTRY_DSN must be a valid HTTP(S) DSN.');
+    }
+    try {
+      const endpoint = new URL(sentryDsn);
+      if (
+        !['http:', 'https:'].includes(endpoint.protocol) ||
+        !endpoint.hostname ||
+        !endpoint.username ||
+        endpoint.password ||
+        endpoint.pathname === '/' ||
+        endpoint.search ||
+        endpoint.hash ||
+        (config.NODE_ENV === 'production' && endpoint.protocol !== 'https:')
+      ) {
+        throw new Error();
+      }
+    } catch {
+      throw new Error('SENTRY_DSN must be an HTTP(S) DSN without a password, query data, or fragment.');
+    }
   }
   const redisUrl = config.REDIS_URL;
   if (config.NODE_ENV === 'production' && typeof redisUrl !== 'string') {
@@ -41,6 +142,16 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
       throw new Error('REDIS_URL must be a valid Redis endpoint and use database 0 in production.');
     }
   }
+  const production = config.NODE_ENV === 'production';
+  const lifiApiKey = config.LIFI_API_KEY;
+  if (production && (typeof lifiApiKey !== 'string' || lifiApiKey.length === 0)) {
+    throw new Error('LIFI_API_KEY is required in production.');
+  }
+  if (lifiApiKey !== undefined && lifiApiKey !== '' &&
+      (typeof lifiApiKey !== 'string' || !/^[\x21-\x7E]{1,512}$/.test(lifiApiKey))) {
+    throw new Error('LIFI_API_KEY must be 1-512 printable non-space ASCII characters.');
+  }
+  const privateRpcHosts = production ? parsePrivateRpcHosts(config.RPC_PRIVATE_HOSTS) : null;
   const blockedCountries = config.GEO_BLOCKED_COUNTRIES;
   const trustedProxyCidrs = config.GEO_TRUSTED_PROXY_CIDRS;
   if (blockedCountries !== undefined) {
@@ -89,12 +200,16 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
     }
   }
   const solanaRpcUrl = config.SOLANA_RPC_URL;
+  if (production && (typeof solanaRpcUrl !== 'string' || solanaRpcUrl.length === 0)) {
+    throw new Error('SOLANA_RPC_URL is required in production.');
+  }
   if (solanaRpcUrl !== undefined) {
     if (typeof solanaRpcUrl !== 'string') {
       throw new Error('SOLANA_RPC_URL must be an HTTPS endpoint.');
     }
+    let endpoint: URL;
     try {
-      const endpoint = new URL(solanaRpcUrl);
+      endpoint = new URL(solanaRpcUrl);
       const localHttpEndpoint = config.NODE_ENV !== 'production' &&
         endpoint.protocol === 'http:' &&
         ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
@@ -110,16 +225,25 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
     } catch {
       throw new Error('SOLANA_RPC_URL must be an HTTPS endpoint.');
     }
+    if (production && privateRpcHosts) assertPrivateRpc('SOLANA_RPC_URL', endpoint, privateRpcHosts);
   }
-  const supportedEvmChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
+  if (production) {
+    for (const chainId of supportedEvmChainIds) {
+      const key = `EVM_RPC_URL_${chainId}`;
+      if (typeof config[key] !== 'string' || config[key] === '') {
+        throw new Error(`${key} is required in production.`);
+      }
+    }
+  }
   for (const [key, value] of Object.entries(config)) {
     if (key.startsWith('EVM_RPC_URL_') && value !== undefined && value !== '') {
       const chainId = key.slice('EVM_RPC_URL_'.length);
       if (!supportedEvmChainIds.has(chainId) || typeof value !== 'string') {
         throw new Error(`${key} must configure a supported EVM chain endpoint.`);
       }
+      let endpoint: URL;
       try {
-        const endpoint = new URL(value);
+        endpoint = new URL(value);
         const localHttpEndpoint = config.NODE_ENV !== 'production' &&
           endpoint.protocol === 'http:' &&
           ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname);
@@ -135,6 +259,7 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
       } catch {
         throw new Error(`${key} must be an HTTPS endpoint.`);
       }
+      if (production && privateRpcHosts) assertPrivateRpc(key, endpoint, privateRpcHosts);
     }
     if (key.startsWith('EVM_CONFIRMATIONS_') && value !== undefined && value !== '') {
       const chainId = key.slice('EVM_CONFIRMATIONS_'.length);

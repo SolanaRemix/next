@@ -26,6 +26,7 @@ model User {
   passwordHash  String         @map("password_hash") @db.VarChar(255)
   role          UserRole       @default(Guest)
   accountStatus AccountStatus  @default(Active) @map("account_status")
+  authVersion   Int            @default(0) @map("auth_version")
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt     DateTime?      @map("deleted_at") @db.Timestamptz(6)
@@ -34,6 +35,7 @@ model User {
   solanaSwapOrders SolanaSwapOrder[]
   evmSwapOrders EvmSwapOrder[]
   financialControlChanges FinancialOperationsControl[]
+  evmQuoteProviderChanges EvmQuoteProviderControl[]
 
   @@index([role])
   @@index([accountStatus])
@@ -136,4 +138,14 @@ model FinancialOperationsControl {
   updater   User?    @relation(fields: [updatedBy], references: [id], onDelete: SetNull)
 
   @@map("financial_operations_controls")
+}
+
+model EvmQuoteProviderControl {
+  id               String   @id @db.VarChar(32)
+  enabledProviders String[] @default(["0x", "1inch", "paraswap"]) @map("enabled_providers")
+  updatedBy        String?  @map("updated_by") @db.Uuid
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updater           User?    @relation(fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("evm_quote_provider_controls")
 }

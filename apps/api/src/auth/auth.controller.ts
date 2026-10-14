@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,11 +23,12 @@ import { CurrentUser, Public, Roles } from './auth.decorators.js';
 import type { AuthUser } from './auth-user.js';
 import {
   AssignRoleDto,
+  ChangePasswordDto,
   CredentialsDto,
   ListUsersQueryDto,
   UpdateAccountStatusDto,
 } from './auth.dto.js';
-import { AuthService, type AuthSession } from './auth.service.js';
+import { AuthService, type AuthSession, type PasswordChangeResult } from './auth.service.js';
 
 function setRefreshCookie(response: Response, token: string): void {
   response.cookie(REFRESH_COOKIE_NAME, token, {
@@ -108,6 +110,52 @@ export class AuthController {
       request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
     );
     clearRefreshCookie(response);
+  }
+
+  @Get('sessions')
+  listSessions(
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request,
+  ) {
+    return this.authService.listSessions(
+      user.id,
+      request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
+    );
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Patch('password')
+  changePassword(
+    @Body() request: ChangePasswordDto,
+    @CurrentUser() user: AuthUser,
+    @Req() httpRequest: Request,
+  ): Promise<PasswordChangeResult> {
+    return this.authService.changePassword(
+      user.id,
+      request.currentPassword,
+      request.newPassword,
+      httpRequest.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
+    );
+  }
+
+  @Delete('sessions/revoke-others')
+  revokeOtherSessions(
+    @CurrentUser() user: AuthUser,
+    @Req() request: Request,
+  ): Promise<{ revokedCount: number }> {
+    return this.authService.revokeOtherSessions(
+      user.id,
+      request.cookies?.[REFRESH_COOKIE_NAME] as string | undefined,
+    ).then((revokedCount) => ({ revokedCount }));
+  }
+
+  @Delete('sessions/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async revokeSession(
+    @CurrentUser() user: AuthUser,
+    @Param('id', new ParseUUIDPipe()) sessionId: string,
+  ): Promise<void> {
+    await this.authService.revokeSession(user.id, sessionId);
   }
 
   @Get('me')

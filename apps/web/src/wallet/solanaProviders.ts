@@ -1,18 +1,24 @@
+import { Buffer } from "buffer";
 import {
   Connection,
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
   Transaction,
+  TransactionInstruction,
   VersionedTransaction,
 } from "@solana/web3.js";
 import type { NativeTransferRequest, TransferReceipt, WalletAccount, WalletBalance } from "@next/types";
+import type { NativeTransferSimulation } from "./providers";
 import { parseTokenAmount } from "./providers";
 
 interface SolanaWalletProvider {
   publicKey?: { toBase58(): string } | null;
   connect(): Promise<{ publicKey?: { toBase58(): string } } | void>;
   disconnect(): Promise<void>;
+  on?(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+  off?(event: string, listener: (...args: unknown[]) => void): unknown;
   signAndSendTransaction(transaction: Transaction): Promise<string | { signature: string }>;
   signTransaction?(transaction: VersionedTransaction): Promise<VersionedTransaction>;
 }
@@ -37,6 +43,53 @@ function getConnection(): Connection {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseTokenAccount(value: unknown): {
+  mint: string;
+  amount: bigint;
+  decimals: number;
+} {
+  if (!isRecord(value) || !isRecord(value.account) || !isRecord(value.account.data)) {
+    throw new Error("Solana RPC returned an invalid token account.");
+  }
+  const data = value.account.data;
+  if (!isRecord(data.parsed) || !isRecord(data.parsed.info)) {
+    throw new Error("Solana RPC returned an invalid parsed token account.");
+  }
+  const info = data.parsed.info;
+  if (!isRecord(info.tokenAmount)) throw new Error("Solana RPC returned an invalid token amount.");
+  const tokenAmount = info.tokenAmount;
+  if (
+    typeof info.mint !== "string" ||
+    typeof tokenAmount.amount !== "string" ||
+    !/^(?:0|[1-9]\d{0,19})$/.test(tokenAmount.amount) ||
+    typeof tokenAmount.decimals !== "number" ||
+    !Number.isInteger(tokenAmount.decimals) ||
+    tokenAmount.decimals < 0 ||
+    tokenAmount.decimals > 255
+  ) throw new Error("Solana RPC returned an invalid token amount.");
+  const rawAmount = BigInt(tokenAmount.amount);
+  if (rawAmount > 18_446_744_073_709_551_615n) {
+    throw new Error("Solana RPC returned an unsupported token amount.");
+  }
+  try {
+    new PublicKey(info.mint);
+  } catch {
+    throw new Error("Solana RPC returned an invalid token mint.");
+  }
+  return { mint: info.mint, amount: rawAmount, decimals: tokenAmount.decimals };
+}
+
+function formatTokenUnits(amount: bigint, decimals: number): string {
+  const scale = 10n ** BigInt(decimals);
+  const whole = amount / scale;
+  const fraction = (amount % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
 export async function connectSolanaWallet(): Promise<WalletAccount> {
   const provider = getSolanaProvider();
   const connected = await provider.connect();
@@ -54,6 +107,63 @@ export async function disconnectSolanaWallet(): Promise<void> {
   await getSolanaProvider().disconnect();
 }
 
+export function subscribeSolanaAccountChanges(
+  onChange: (account: WalletAccount | null) => void,
+): () => void {
+  const provider = getSolanaProvider();
+  const removeListener = provider.removeListener ?? provider.off;
+  if (!provider.on || !removeListener) return () => undefined;
+
+  let active = true;
+  const accountChanged = (value: unknown) => {
+    if (!active) return;
+    try {
+      const candidate = value === undefined ? provider.publicKey : value;
+      if (candidate === null) {
+        onChange(null);
+        return;
+      }
+      const address = typeof candidate === "string"
+        ? candidate
+        : typeof candidate === "object" && candidate !== null
+          && "toBase58" in candidate && typeof candidate.toBase58 === "function"
+          ? candidate.toBase58()
+          : null;
+      if (!address) {
+        onChange(null);
+        return;
+      }
+      const publicKey = new PublicKey(address);
+      onChange({
+        address: publicKey.toBase58(),
+        chain: "solana",
+        chainId: "mainnet-beta",
+        connectedAt: new Date().toISOString(),
+      });
+    } catch {
+      onChange(null);
+    }
+  };
+  const disconnected = () => {
+    if (active) onChange(null);
+  };
+  try {
+    provider.on("accountChanged", accountChanged);
+    provider.on("disconnect", disconnected);
+  } catch (cause) {
+    active = false;
+    removeListener.call(provider, "accountChanged", accountChanged);
+    removeListener.call(provider, "disconnect", disconnected);
+    throw cause;
+  }
+  return () => {
+    if (!active) return;
+    active = false;
+    removeListener.call(provider, "accountChanged", accountChanged);
+    removeListener.call(provider, "disconnect", disconnected);
+  };
+}
+
 export async function fetchSolanaNativeBalance(account: WalletAccount): Promise<WalletBalance> {
   const lamports = await getConnection().getBalance(new PublicKey(account.address));
   return {
@@ -65,33 +175,158 @@ export async function fetchSolanaNativeBalance(account: WalletAccount): Promise<
   };
 }
 
+export async function fetchSolanaTokenBalances(account: WalletAccount): Promise<WalletBalance[]> {
+  if (account.chain !== "solana") throw new Error("Connect a Solana wallet to read SPL token balances.");
+  let owner: PublicKey;
+  try {
+    owner = new PublicKey(account.address);
+  } catch {
+    throw new Error("Connected wallet returned an invalid Solana address.");
+  }
+  const connectedAddress = getSolanaProvider().publicKey?.toBase58();
+  if (connectedAddress !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before refreshing.");
+  }
+  const connection = getConnection();
+  const tokenPrograms = [
+    new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+  ];
+  const accounts = await Promise.all(tokenPrograms.map((programId) =>
+    connection.getParsedTokenAccountsByOwner(owner, { programId }),
+  ));
+  if (getSolanaProvider().publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before refreshing.");
+  }
+  const balances = new Map<string, { amount: bigint; decimals: number }>();
+  for (const response of accounts) {
+    for (const accountInfo of response.value) {
+      const token = parseTokenAccount(accountInfo);
+      if (token.amount === 0n) continue;
+      const current = balances.get(token.mint);
+      if (current && current.decimals !== token.decimals) {
+        throw new Error("Solana RPC returned inconsistent token decimals.");
+      }
+      balances.set(token.mint, {
+        amount: (current?.amount ?? 0n) + token.amount,
+        decimals: token.decimals,
+      });
+    }
+  }
+  return [...balances.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([mint, token]) => ({
+      address: account.address,
+      chain: "solana",
+      asset: `${mint.slice(0, 4)}…${mint.slice(-4)}`,
+      amount: formatTokenUnits(token.amount, token.decimals),
+      decimals: token.decimals,
+      tokenAddress: mint,
+      kind: "token",
+    }));
+}
+
 export async function sendSolanaNativeTransfer(
   account: WalletAccount,
   request: NativeTransferRequest,
 ): Promise<TransferReceipt> {
-  let destination: PublicKey;
-  try {
-    destination = new PublicKey(request.to);
-  } catch {
-    throw new Error("Enter a valid destination Solana address.");
+  const { provider, transaction } = await prepareSolanaNativeTransfer(account, request);
+  if (provider.publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before sending.");
   }
-  const provider = getSolanaProvider();
-  const connection = getConnection();
-  const transaction = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: new PublicKey(account.address),
-      toPubkey: destination,
-      lamports: parseTokenAmount(request.amount, 9),
-    }),
-  );
-  transaction.feePayer = new PublicKey(account.address);
-  transaction.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
   const result = await provider.signAndSendTransaction(transaction);
   const transactionId = typeof result === "string" ? result : result.signature;
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(transactionId)) {
     throw new Error("Wallet returned an invalid Solana transaction identifier.");
   }
   return { chain: "solana", transactionId, status: "submitted" };
+}
+
+export async function simulateSolanaNativeTransfer(
+  account: WalletAccount,
+  request: NativeTransferRequest,
+): Promise<NativeTransferSimulation> {
+  const { simulation } = await prepareSolanaNativeTransfer(account, request);
+  return simulation;
+}
+
+async function prepareSolanaNativeTransfer(
+  account: WalletAccount,
+  request: NativeTransferRequest,
+): Promise<{
+  provider: SolanaWalletProvider;
+  transaction: Transaction;
+  simulation: NativeTransferSimulation;
+}> {
+  if (account.chain !== "solana" || request.chain !== "solana") {
+    throw new Error("Connect a Solana wallet to simulate this transfer.");
+  }
+  if (request.chainId && request.chainId !== account.chainId) {
+    throw new Error("The selected chain does not match the connected wallet.");
+  }
+  const lamports = parseTokenAmount(request.amount, 9);
+  let owner: PublicKey;
+  let destination: PublicKey;
+  try {
+    owner = new PublicKey(account.address);
+    destination = new PublicKey(request.to);
+  } catch {
+    throw new Error("Enter valid source and destination Solana addresses.");
+  }
+  const provider = getSolanaProvider();
+  if (provider.publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before simulating.");
+  }
+  const connection = getConnection();
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  if (lamports > 0xffff_ffff_ffff_ffffn) {
+    throw new Error("Transfer amount exceeds the Solana system instruction limit.");
+  }
+  const instructionData = new Uint8Array(12);
+  const instructionView = new DataView(instructionData.buffer);
+  instructionView.setUint32(0, 2, true);
+  instructionView.setBigUint64(4, lamports, true);
+  const transaction = new Transaction().add(new TransactionInstruction({
+    programId: SystemProgram.programId,
+    keys: [
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from(instructionData),
+  }));
+  transaction.feePayer = owner;
+  transaction.recentBlockhash = blockhash;
+  const simulationResult = await connection.simulateTransaction(transaction);
+  if (simulationResult.value.err !== null) {
+    throw new Error("Solana RPC simulation rejected the transfer. No wallet transaction was requested.");
+  }
+  const [feeResult, balance] = await Promise.all([
+    connection.getFeeForMessage(transaction.compileMessage(), "confirmed"),
+    connection.getBalance(owner, "confirmed"),
+  ]);
+  const fee = feeResult.value;
+  if (fee === null || !Number.isSafeInteger(fee) || fee < 0 || !Number.isSafeInteger(balance) || balance < 0) {
+    throw new Error("Solana RPC returned invalid transfer fee or balance data.");
+  }
+  const totalDebit = lamports + BigInt(fee);
+  if (BigInt(balance) < totalDebit) {
+    throw new Error("Insufficient SOL balance for the transfer and estimated network fee.");
+  }
+  if (provider.publicKey?.toBase58() !== account.address) {
+    throw new Error("The connected Solana account changed. Reconnect your wallet before continuing.");
+  }
+  return {
+    provider,
+    transaction,
+    simulation: {
+      chain: "solana",
+      asset: "SOL",
+      recipient: request.to,
+      amount: formatTokenUnits(lamports, 9),
+      estimatedFee: formatTokenUnits(BigInt(fee), 9),
+      totalEstimatedDebit: formatTokenUnits(totalDebit, 9),
+    },
+  };
 }
 
 export async function signSolanaVersionedTransaction(

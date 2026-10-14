@@ -84,6 +84,131 @@ describe('RedisThrottlerStorage', () => {
     });
   });
 
+  it('reads and writes quote cache entries with Redis Cluster-safe hashed keys and a TTL', async () => {
+    const key = 'a'.repeat(64);
+    const read = createStorage('{"routes":[]}');
+    await expect(read.storage.getQuoteCache(key)).resolves.toBe('{"routes":[]}');
+    expect(read.client.eval).toHaveBeenCalledWith(
+      "return redis.call('GET', KEYS[1])",
+      { keys: [`test:throttle:quotes:{${key}}`], arguments: [] },
+    );
+
+    const write = createStorage('OK');
+    await expect(write.storage.setQuoteCache(key, '{"routes":[]}', 3_000))
+      .resolves.toBeUndefined();
+    expect(write.client.eval).toHaveBeenCalledWith(
+      "return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])",
+      {
+        keys: [`test:throttle:quotes:{${key}}`],
+        arguments: ['3000', '{"routes":[]}'],
+      },
+    );
+  });
+
+  it('namespaces screening cache entries separately from quote cache entries', async () => {
+    const key = 'b'.repeat(64);
+    const read = createStorage('{"riskLevel":"low"}');
+    await expect(read.storage.getTokenScreeningCache(key))
+      .resolves.toBe('{"riskLevel":"low"}');
+    expect(read.client.eval).toHaveBeenCalledWith(
+      "return redis.call('GET', KEYS[1])",
+      { keys: [`test:throttle:token-screening:{${key}}`], arguments: [] },
+    );
+
+    const write = createStorage('OK');
+    await expect(write.storage.setTokenScreeningCache(key, '{"riskLevel":"low"}', 10_000))
+      .resolves.toBeUndefined();
+    expect(write.client.eval).toHaveBeenCalledWith(
+      "return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])",
+      {
+        keys: [`test:throttle:token-screening:{${key}}`],
+        arguments: ['10000', '{"riskLevel":"low"}'],
+      },
+    );
+  });
+
+  it('fails closed on quote cache command errors and invalid Redis responses', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const readFailure = createStorage();
+    readFailure.client.eval.mockRejectedValue(new Error('connection lost'));
+    await expect(readFailure.storage.getQuoteCache('a'.repeat(64)))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    const writeFailure = createStorage('invalid');
+    await expect(writeFailure.storage.setQuoteCache('a'.repeat(64), '{}', 3_000))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    await expect(new RedisThrottlerStorage(null).getQuoteCache('key')).resolves.toBeNull();
+    await expect(new RedisThrottlerStorage(null).setQuoteCache('key', '{}', 3_000))
+      .resolves.toBeUndefined();
+  });
+
+  it('claims normal provider attempts and only one half-open recovery probe', async () => {
+    const providerHash = (await import('node:crypto'))
+      .createHash('sha256').update('0x').digest('hex');
+    const failuresKey = `test:throttle:provider-circuit:{${providerHash}}:failures`;
+    const openKey = `test:throttle:provider-circuit:{${providerHash}}:open`;
+    const recoveryKey = `test:throttle:provider-circuit:{${providerHash}}:recovery`;
+    const probeKey = `test:throttle:provider-circuit:{${providerHash}}:probe`;
+    const normalAttempt = createStorage(1);
+    await expect(normalAttempt.storage.claimProviderCircuitAttempt('0x', 10_000))
+      .resolves.toBe(true);
+    expect(normalAttempt.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('SET'"),
+      { keys: [openKey, recoveryKey, probeKey], arguments: ['10000'] },
+    );
+    const deniedProbe = createStorage(0);
+    await expect(deniedProbe.storage.claimProviderCircuitAttempt('0x', 10_000))
+      .resolves.toBe(false);
+  });
+
+  it('opens the provider circuit at threshold and immediately reopens it after a failed probe', async () => {
+    const providerHash = (await import('node:crypto'))
+      .createHash('sha256').update('0x').digest('hex');
+    const failuresKey = `test:throttle:provider-circuit:{${providerHash}}:failures`;
+    const openKey = `test:throttle:provider-circuit:{${providerHash}}:open`;
+    const recoveryKey = `test:throttle:provider-circuit:{${providerHash}}:recovery`;
+    const probeKey = `test:throttle:provider-circuit:{${providerHash}}:probe`;
+    const failure = createStorage(1);
+    await expect(failure.storage.recordProviderCircuitFailure('0x', 30_000, 5, 15_000))
+      .resolves.toBe(true);
+    expect(failure.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('INCR'"),
+      {
+        keys: [failuresKey, openKey, recoveryKey, probeKey],
+        arguments: ['30000', '5', '15000'],
+      },
+    );
+
+    const failedProbe = createStorage(1);
+    await expect(failedProbe.storage.recordProviderCircuitFailure('0x', 30_000, 5, 15_000))
+      .resolves.toBe(true);
+    expect(failedProbe.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining('EXISTS'),
+      {
+        keys: [failuresKey, openKey, recoveryKey, probeKey],
+        arguments: ['30000', '5', '15000'],
+      },
+    );
+
+    const success = createStorage(1);
+    await expect(success.storage.recordProviderCircuitSuccess('0x')).resolves.toBeUndefined();
+    expect(success.client.eval).toHaveBeenCalledWith(
+      "redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4]); return 1",
+      { keys: [failuresKey, openKey, recoveryKey, probeKey], arguments: [] },
+    );
+  });
+
+  it('fails closed when Redis cannot determine provider circuit state', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const unavailable = createStorage();
+    unavailable.client.eval.mockRejectedValue(new Error('connection lost'));
+    await expect(unavailable.storage.claimProviderCircuitAttempt('0x', 10_000))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(unavailable.storage.recordProviderCircuitFailure('0x', 30_000, 5, 15_000))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
   it('fails readiness when configured Redis is disconnected or unavailable', async () => {
     const disconnected = createStorage();
     await expect(disconnected.storage.checkHealth()).rejects.toMatchObject({ status: 503 });

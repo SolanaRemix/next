@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountStatus, UserRole } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
 
@@ -20,6 +21,7 @@ const user = {
   passwordHash: 'argon2id-hash',
   role: UserRole.Guest,
   accountStatus: AccountStatus.Active,
+  authVersion: 0,
   deletedAt: null,
 };
 
@@ -34,10 +36,12 @@ function createFixture() {
         email: user.email,
         role: UserRole.Guest,
         accountStatus: AccountStatus.Active,
+        authVersion: 0,
       }),
       findFirst: vi.fn(),
       count: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     refreshToken: {
       create: vi.fn().mockResolvedValue({}),
@@ -51,6 +55,7 @@ function createFixture() {
       create: vi.fn().mockResolvedValue({}),
     },
     refreshToken: {
+      findMany: vi.fn(),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     $transaction: vi.fn(async <T>(callback: (tx: typeof transaction) => Promise<T>) =>
@@ -173,6 +178,280 @@ describe('AuthService', () => {
     expect(transaction.auditLog.create).toHaveBeenCalledTimes(2);
   });
 
+  it('lists only the user sessions and never returns refresh token hashes', async () => {
+    const { service, prisma } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const current = {
+      id: 'c15c090e-2615-4e52-ad67-f212a4154074',
+      tokenHash: createHash('sha256').update(currentToken).digest('hex'),
+      createdAt: new Date('2026-10-09T00:00:00.000Z'),
+      expiresAt: new Date('2026-11-09T00:00:00.000Z'),
+      revokedAt: null,
+    };
+    prisma.refreshToken.findMany.mockResolvedValue([
+      current,
+      { ...current, id: '3c6164e9-6504-4f61-9a74-728084a9ab38', tokenHash: 'another-hash' },
+    ]);
+
+    const sessions = await service.listSessions(user.id, currentToken);
+
+    expect(sessions).toEqual([
+      expect.objectContaining({ id: current.id, current: true }),
+      expect.objectContaining({ id: '3c6164e9-6504-4f61-9a74-728084a9ab38', current: false }),
+    ]);
+    expect(sessions[0]).not.toHaveProperty('tokenHash');
+    expect(prisma.refreshToken.findMany).toHaveBeenCalledWith({
+      where: { userId: user.id },
+      select: { id: true, tokenHash: true, createdAt: true, expiresAt: true, revokedAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  });
+
+  it('revokes an owned session and audits the action transactionally', async () => {
+    const { service, prisma, transaction } = createFixture();
+    const sessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
+
+    await service.revokeSession(user.id, sessionId);
+
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { id: sessionId, userId: user.id, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.session.revoked',
+        metadata: { sessionId },
+      },
+    });
+  });
+
+  it('does not revoke or disclose a session belonging to another user', async () => {
+    const { service, transaction } = createFixture();
+    transaction.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.revokeSession(user.id, 'c15c090e-2615-4e52-ad67-f212a4154074'))
+      .rejects.toThrow(/Session not found/);
+    expect(transaction.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('changes the password, preserves the current session, revokes others, and audits atomically', async () => {
+    const { service, prisma, transaction, jwt } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const currentSessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
+    prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
+    argonVerify.mockImplementation(async (_hash, password) =>
+      password === 'current-secure-password');
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: currentSessionId,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    transaction.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+    transaction.user.findFirst.mockResolvedValue({
+      id: user.id,
+      role: UserRole.Guest,
+      authVersion: 1,
+    });
+
+    await expect(service.changePassword(
+      user.id,
+      'current-secure-password',
+      'new-secure-password',
+      currentToken,
+    )).resolves.toEqual({
+      revokedOtherSessions: 2,
+      accessToken: 'signed-access-token',
+      expiresIn: 15 * 60,
+    });
+
+    expect(argonHash).toHaveBeenCalledWith('new-secure-password', expect.objectContaining({
+      type: 2,
+      memoryCost: 19_456,
+    }));
+    expect(transaction.user.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: user.id,
+        passwordHash: user.passwordHash,
+        accountStatus: AccountStatus.Active,
+        deletedAt: null,
+      },
+      data: { passwordHash: 'argon2id-hash', authVersion: { increment: 1 } },
+    });
+    expect(transaction.user.findFirst).toHaveBeenCalledWith({
+      where: { id: user.id, deletedAt: null, accountStatus: AccountStatus.Active },
+      select: { id: true, role: true, authVersion: true },
+    });
+    expect(jwt.signAsync).toHaveBeenCalledWith(
+      { sub: user.id, role: UserRole.Guest, authVersion: 1 },
+      expect.objectContaining({ expiresIn: '15m' }),
+    );
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: user.id, id: { not: currentSessionId }, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.password.changed',
+        metadata: { revokedOtherSessions: 2, authVersion: 1 },
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+  });
+
+  it('rejects an incorrect current password and records no password values', async () => {
+    const { service, prisma, transaction } = createFixture();
+    prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
+    argonVerify.mockResolvedValue(false);
+
+    await expect(service.changePassword(
+      user.id,
+      'incorrect-current-password',
+      'new-secure-password',
+      'A'.repeat(43),
+    )).rejects.toThrow(/current password is incorrect/i);
+
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.password.change.failed',
+        metadata: { reason: 'current_password_invalid' },
+      },
+    });
+    expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain('incorrect-current-password');
+    expect(transaction.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing refresh session before changing the password', async () => {
+    const { service, prisma, transaction } = createFixture();
+
+    await expect(service.changePassword(
+      user.id,
+      'current-secure-password',
+      'new-secure-password',
+      undefined,
+    )).rejects.toThrow(/current refresh session is invalid/i);
+
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(transaction.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a revoked current refresh session without applying the password change', async () => {
+    const { service, prisma, transaction } = createFixture();
+    prisma.user.findFirst.mockResolvedValue({ passwordHash: user.passwordHash });
+    argonVerify.mockImplementation(async (_hash, password) =>
+      password === 'current-secure-password');
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: 'revoked-session',
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: new Date(),
+    });
+
+    await expect(service.changePassword(
+      user.id,
+      'current-secure-password',
+      'new-secure-password',
+      'A'.repeat(43),
+    )).rejects.toThrow(/current refresh session is invalid/i);
+
+    expect(transaction.user.updateMany).not.toHaveBeenCalled();
+    expect(transaction.refreshToken.updateMany).not.toHaveBeenCalled();
+    expect(transaction.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('revokes other active sessions but preserves and audits the current session', async () => {
+    const { service, transaction, prisma } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const currentSessionId = 'c15c090e-2615-4e52-ad67-f212a4154074';
+    transaction.refreshToken.findUnique.mockResolvedValue({
+      id: currentSessionId,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    });
+    transaction.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+
+    await expect(service.revokeOtherSessions(user.id, currentToken)).resolves.toBe(2);
+
+    expect(transaction.refreshToken.findUnique).toHaveBeenCalledWith({
+      where: { tokenHash: createHash('sha256').update(currentToken, 'utf8').digest('hex') },
+      select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+    });
+    expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: user.id,
+        id: { not: currentSessionId },
+        revokedAt: null,
+        expiresAt: { gt: expect.any(Date) },
+      },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(transaction.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: user.id,
+        action: 'auth.sessions.others_revoked',
+        metadata: { revokedCount: 2 },
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' },
+    );
+  });
+
+  it('does not revoke sessions when the current refresh token is missing or invalid', async () => {
+    const { service, prisma, transaction } = createFixture();
+
+    await expect(service.revokeOtherSessions(user.id, undefined))
+      .rejects.toThrow(/current refresh session is invalid/i);
+    await expect(service.revokeOtherSessions(user.id, 'invalid'))
+      .rejects.toThrow(/current refresh session is invalid/i);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(transaction.refreshToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects expired, revoked, or foreign current refresh sessions', async () => {
+    const { service, transaction } = createFixture();
+    const currentToken = 'A'.repeat(43);
+    const invalidSessions = [
+      {
+        id: 'expired-session',
+        userId: user.id,
+        expiresAt: new Date(Date.now() - 60_000),
+        revokedAt: null,
+      },
+      {
+        id: 'revoked-session',
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: new Date(),
+      },
+      {
+        id: 'foreign-session',
+        userId: 'another-user',
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+      },
+    ];
+    for (const session of invalidSessions) {
+      transaction.refreshToken.findUnique.mockResolvedValueOnce(session);
+      await expect(service.revokeOtherSessions(user.id, currentToken))
+        .rejects.toThrow(/current refresh session is invalid/i);
+    }
+    expect(transaction.refreshToken.updateMany).not.toHaveBeenCalled();
+    expect(transaction.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it('assigns roles only through an audited SuperAdmin action', async () => {
     const { service, transaction } = createFixture();
     transaction.user.findFirst
@@ -238,6 +517,12 @@ describe('AuthService', () => {
     );
 
     expect(updated.accountStatus).toBe(AccountStatus.Restricted);
+    expect(transaction.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: {
+        accountStatus: AccountStatus.Restricted,
+        authVersion: { increment: 1 },
+      },
+    }));
     expect(transaction.refreshToken.updateMany).toHaveBeenCalledWith({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: expect.any(Date) },

@@ -2,10 +2,19 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module.js';
+import { createRequestLoggingMiddleware } from './observability/request-logging.middleware.js';
+import { startTelemetry } from './observability/telemetry.js';
+import { startSentry } from './observability/sentry.js';
+import { validateEnvironment } from './config/environment.js';
 
 async function bootstrap(): Promise<void> {
+  validateEnvironment(process.env);
+  await startTelemetry();
+  startSentry();
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
   app.setGlobalPrefix('api');
+  app.use(createRequestLoggingMiddleware());
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
@@ -15,7 +24,8 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'traceparent', 'tracestate'],
+    exposedHeaders: ['X-Request-Id'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
   app.enableShutdownHooks();

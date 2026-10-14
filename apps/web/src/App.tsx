@@ -20,9 +20,39 @@ const SolanaMarketPanel = lazy(() =>
     default: module.SolanaMarketPanel,
   })),
 );
+const TokenScreeningPanel = lazy(() =>
+  import("./token-screening/TokenScreeningPanel").then((module) => ({
+    default: module.TokenScreeningPanel,
+  })),
+);
 const SolanaSwapPanel = lazy(() =>
   import("./swaps/SolanaSwapPanel").then((module) => ({
     default: module.SolanaSwapPanel,
+  })),
+);
+const BridgeQuotePanel = lazy(() =>
+  import("./bridges/BridgeQuotePanel").then((module) => ({
+    default: module.BridgeQuotePanel,
+  })),
+);
+const FinancialControlsPanel = lazy(() =>
+  import("./admin/FinancialControlsPanel").then((module) => ({
+    default: module.FinancialControlsPanel,
+  })),
+);
+const AggregatorControlsPanel = lazy(() =>
+  import("./admin/AggregatorControlsPanel").then((module) => ({
+    default: module.AggregatorControlsPanel,
+  })),
+);
+const UserManagementPanel = lazy(() =>
+  import("./admin/UserManagementPanel").then((module) => ({
+    default: module.UserManagementPanel,
+  })),
+);
+const AuditLogPanel = lazy(() =>
+  import("./admin/AuditLogPanel").then((module) => ({
+    default: module.AuditLogPanel,
   })),
 );
 
@@ -57,6 +87,22 @@ export function App() {
         <p className="muted">Connect a wallet to inspect native balances and initiate wallet-approved transfers.</p>
       </section>
       <AuthPanel />
+      {user?.role === "SuperAdmin" && accessToken && (
+        <>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading administrator controls…</GlassCard>}>
+            <FinancialControlsPanel accessToken={accessToken} />
+          </Suspense>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading provider controls…</GlassCard>}>
+            <AggregatorControlsPanel accessToken={accessToken} />
+          </Suspense>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading user management…</GlassCard>}>
+            <UserManagementPanel accessToken={accessToken} />
+          </Suspense>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading audit log…</GlassCard>}>
+            <AuditLogPanel accessToken={accessToken} />
+          </Suspense>
+        </>
+      )}
       <div className="dashboard-grid">
         <WalletPanel />
         <GlassCard className="security-card">
@@ -89,9 +135,19 @@ export function App() {
           />
         </Suspense>
       </section>
+      <section className="perpetual-section" aria-label="Cross-chain bridge quote">
+        <Suspense fallback={<GlassCard className="feature-loading">Loading bridge quotes…</GlassCard>}>
+          <BridgeQuotePanel accessToken={swapToken} authenticated={user !== null} />
+        </Suspense>
+      </section>
       <section className="perpetual-section" aria-label="Solana token markets">
         <Suspense fallback={<GlassCard className="feature-loading">Loading Solana market data…</GlassCard>}>
           <SolanaMarketPanel accessToken={marketToken} />
+        </Suspense>
+      </section>
+      <section className="perpetual-section" aria-label="EVM token contract screening">
+        <Suspense fallback={<GlassCard className="feature-loading">Loading token screening…</GlassCard>}>
+          <TokenScreeningPanel accessToken={marketToken} />
         </Suspense>
       </section>
       <footer>Self-custody wallet access · Always verify transaction details</footer>

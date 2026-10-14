@@ -16,6 +16,66 @@ export interface WalletBalance {
   asset: string;
   amount: string;
   decimals: number;
+  tokenAddress?: string;
+  kind?: "native" | "token";
+}
+
+export interface CrossChainPortfolioAccountRequest {
+  address: string;
+  chain: WalletChain;
+  chainId: string;
+  tokenAddresses: string[];
+}
+
+export interface CrossChainPortfolioRequest {
+  accounts: CrossChainPortfolioAccountRequest[];
+}
+
+export interface CrossChainPortfolioAsset {
+  balance: WalletBalance;
+  priceUsd: number | null;
+  valueUsd: number | null;
+}
+
+export interface CrossChainPortfolioAccountResult {
+  account: Pick<CrossChainPortfolioAccountRequest, "address" | "chain" | "chainId">;
+  available: boolean;
+  assets: CrossChainPortfolioAsset[];
+  totalUsd: number | null;
+}
+
+export interface CrossChainPortfolioResponse {
+  accounts: CrossChainPortfolioAccountResult[];
+  totalUsd: number | null;
+  complete: boolean;
+  asOf: string;
+}
+
+export interface EvmAllowanceDiscoveryRequest {
+  chainId: string;
+  owner: string;
+  tokenAddresses: string[];
+}
+
+export interface DiscoveredEvmAllowance {
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  spender: string;
+  allowanceRaw: string;
+  allowance: string;
+  lastApprovalBlock: string;
+}
+
+export interface EvmAllowanceDiscoveryResponse {
+  chainId: string;
+  owner: string;
+  scannedFromBlock: string;
+  scannedToBlock: string;
+  scannedBlockCount: number;
+  completeHistory: false;
+  approvals: DiscoveredEvmAllowance[];
+  asOf: string;
 }
 
 export interface NativeTransferRequest {
@@ -98,6 +158,44 @@ export interface SwapQuoteResponse {
   routes: SwapRouteQuote[];
   unavailableProviders: EvmQuoteProvider[];
   quotedAt: string;
+}
+
+export interface CrossChainBridgeQuoteRequest {
+  fromChainId: number;
+  toChainId: number;
+  fromToken: string;
+  toToken: string;
+  fromAmount: string;
+  fromAddress: string;
+  toAddress: string;
+  slippageBps: number;
+}
+
+export interface CrossChainBridgeQuoteCost {
+  kind: "fee" | "gas";
+  name: string;
+  amount: string | null;
+  tokenSymbol: string | null;
+  amountUsd: string | null;
+}
+
+export interface CrossChainBridgeQuoteResponse {
+  provider: "LI.FI";
+  fromChainId: number;
+  toChainId: number;
+  fromToken: string;
+  toToken: string;
+  fromAmount: string;
+  toAmount: string;
+  minimumToAmount: string;
+  fromTokenSymbol: string;
+  toTokenSymbol: string;
+  routeTool: string;
+  routeToolName: string;
+  estimatedDurationSeconds: number | null;
+  costs: CrossChainBridgeQuoteCost[];
+  quotedAt: string;
+  disclaimer: string;
 }
 
 export interface EvmSwapOrderRequest extends SwapQuoteRequest {
@@ -191,3 +289,85 @@ export interface SolanaMarketSearchResponse {
   unavailableProviders: Array<"Jupiter" | "DEX Screener">;
   asOf: string;
 }
+
+export interface EvmPortfolioPricesRequest {
+  chainId: string;
+  tokenAddresses: string[];
+}
+
+export interface PortfolioPricesResponse {
+  chainId: string;
+  nativePriceUsd: number | null;
+  tokenPrices: Array<{
+    address: string;
+    priceUsd: number | null;
+  }>;
+  source: "CoinGecko";
+  asOf: string;
+}
+
+export type EvmTokenRiskLevel = "unknown" | "low" | "medium" | "high" | "critical";
+
+export interface EvmTokenRiskSignals {
+  honeypot: boolean | null;
+  openSource: boolean | null;
+  proxy: boolean | null;
+  mintable: boolean | null;
+  ownershipRecoverable: boolean | null;
+  ownerCanChangeBalance: boolean | null;
+  hiddenOwner: boolean | null;
+  selfDestruct: boolean | null;
+  externalCall: boolean | null;
+  blacklisted: boolean | null;
+  transferPausable: boolean | null;
+  slippageModifiable: boolean | null;
+  buyTaxPercent: number | null;
+  sellTaxPercent: number | null;
+}
+
+export interface EvmTokenRiskScreeningResponse {
+  chainId: string;
+  tokenAddress: string;
+  source: "GoPlus";
+  riskScore: number | null;
+  riskLevel: EvmTokenRiskLevel;
+  observedSignals: number;
+  totalSignals: number;
+  signals: EvmTokenRiskSignals;
+  indicators: string[];
+  asOf: string;
+  disclaimer: string;
+}
+
+export interface SolanaTokenRiskSignals {
+  mintable: boolean | null;
+  freezable: boolean | null;
+  closable: boolean | null;
+  balanceMutable: boolean | null;
+  metadataMutable: boolean | null;
+  transferFeeEnabled: boolean | null;
+  transferFeeUpgradable: boolean | null;
+  transferHookPresent: boolean | null;
+  maliciousTransferHook: boolean | null;
+  transferHookUpgradable: boolean | null;
+  defaultAccountFrozen: boolean | null;
+  defaultAccountStateUpgradable: boolean | null;
+  nonTransferable: boolean | null;
+  trustedToken: boolean | null;
+}
+
+export interface SolanaTokenRiskScreeningResponse {
+  network: "solana-mainnet";
+  tokenAddress: string;
+  source: "GoPlus Solana beta";
+  riskScore: number | null;
+  riskLevel: EvmTokenRiskLevel;
+  observedSignals: number;
+  totalSignals: number;
+  signals: SolanaTokenRiskSignals;
+  indicators: string[];
+  asOf: string;
+  disclaimer: string;
+}
+
+export type EvmPortfolioPricesResponse = PortfolioPricesResponse;

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -34,6 +35,20 @@ export interface AuthSession {
   user: PublicUser;
 }
 
+export interface PasswordChangeResult {
+  revokedOtherSessions: number;
+  accessToken: string;
+  expiresIn: number;
+}
+
+export interface RefreshSessionSummary {
+  id: string;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  current: boolean;
+}
+
 function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
@@ -64,7 +79,7 @@ export class AuthService {
             passwordHash,
             role: UserRole.Guest,
           },
-          select: { id: true, email: true, role: true },
+          select: { id: true, email: true, role: true, authVersion: true },
         });
         return this.persistSession(transaction, user, 'auth.register');
       });
@@ -156,6 +171,175 @@ export class AuthService {
         data: { action: 'auth.logout', ...(actorId ? { actorId } : {}) },
       });
     });
+  }
+
+  async listSessions(userId: string, currentRefreshToken: string | undefined): Promise<RefreshSessionSummary[]> {
+    const currentTokenHash = currentRefreshToken && /^[A-Za-z0-9_-]{43}$/.test(currentRefreshToken)
+      ? hashRefreshToken(currentRefreshToken)
+      : null;
+    const sessions = await this.prisma.refreshToken.findMany({
+      where: { userId },
+      select: { id: true, tokenHash: true, createdAt: true, expiresAt: true, revokedAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return sessions.map(({ id, tokenHash, createdAt, expiresAt, revokedAt }) => ({
+      id,
+      createdAt,
+      expiresAt,
+      revokedAt,
+      current: currentTokenHash !== null && tokenHash === currentTokenHash,
+    }));
+  }
+
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      const revoked = await transaction.refreshToken.updateMany({
+        where: { id: sessionId, userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      if (revoked.count !== 1) throw new NotFoundException('Session not found or already revoked.');
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.session.revoked',
+          metadata: { sessionId },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  async revokeOtherSessions(userId: string, currentRefreshToken: string | undefined): Promise<number> {
+    if (!currentRefreshToken || !/^[A-Za-z0-9_-]{43}$/.test(currentRefreshToken)) {
+      throw new UnauthorizedException('Current refresh session is invalid or expired.');
+    }
+    const tokenHash = hashRefreshToken(currentRefreshToken);
+    return this.prisma.$transaction(async (transaction) => {
+      const now = new Date();
+      const current = await transaction.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+      });
+      if (
+        !current ||
+        current.userId !== userId ||
+        current.revokedAt !== null ||
+        current.expiresAt <= now
+      ) {
+        throw new UnauthorizedException('Current refresh session is invalid or expired.');
+      }
+      const revoked = await transaction.refreshToken.updateMany({
+        where: {
+          userId,
+          id: { not: current.id },
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { revokedAt: now },
+      });
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.sessions.others_revoked',
+          metadata: { revokedCount: revoked.count },
+        },
+      });
+      return revoked.count;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    currentRefreshToken: string | undefined,
+  ): Promise<PasswordChangeResult> {
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('New password must be different from the current password.');
+    }
+    if (!currentRefreshToken || !/^[A-Za-z0-9_-]{43}$/.test(currentRefreshToken)) {
+      throw new UnauthorizedException('Current refresh session is invalid or expired.');
+    }
+    const account = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null, accountStatus: AccountStatus.Active },
+      select: { passwordHash: true },
+    });
+    if (!account || !(await argon2.verify(account.passwordHash, currentPassword))) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.password.change.failed',
+          metadata: { reason: 'current_password_invalid' },
+        },
+      });
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+    const newPasswordHash = await argon2.hash(newPassword, {
+      type: argon2.argon2id,
+      memoryCost: 19_456,
+      timeCost: 2,
+      parallelism: 1,
+    });
+    const tokenHash = hashRefreshToken(currentRefreshToken);
+    return this.prisma.$transaction(async (transaction) => {
+      const now = new Date();
+      const currentSession = await transaction.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+      });
+      if (
+        !currentSession ||
+        currentSession.userId !== userId ||
+        currentSession.revokedAt !== null ||
+        currentSession.expiresAt <= now
+      ) {
+        throw new UnauthorizedException('Current refresh session is invalid or expired.');
+      }
+      const changed = await transaction.user.updateMany({
+        where: {
+          id: userId,
+          passwordHash: account.passwordHash,
+          accountStatus: AccountStatus.Active,
+          deletedAt: null,
+        },
+        data: { passwordHash: newPasswordHash, authVersion: { increment: 1 } },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException('Password changed concurrently. Sign in again and retry.');
+      }
+      const updatedUser = await transaction.user.findFirst({
+        where: { id: userId, deletedAt: null, accountStatus: AccountStatus.Active },
+        select: { id: true, role: true, authVersion: true },
+      });
+      if (!updatedUser) throw new UnauthorizedException();
+      const revoked = await transaction.refreshToken.updateMany({
+        where: {
+          userId,
+          id: { not: currentSession.id },
+          revokedAt: null,
+        },
+        data: { revokedAt: now },
+      });
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'auth.password.changed',
+          metadata: {
+            revokedOtherSessions: revoked.count,
+            authVersion: updatedUser.authVersion,
+          },
+        },
+      });
+      return {
+        revokedOtherSessions: revoked.count,
+        accessToken: await this.issueAccessToken(
+          updatedUser.id,
+          updatedUser.role,
+          updatedUser.authVersion,
+        ),
+        expiresIn: 15 * 60,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   async listUsers(limit: number, cursor?: string): Promise<AdminUser[]> {
@@ -267,7 +451,7 @@ export class AuthService {
       if (target.accountStatus === status) return target;
       const updated = await transaction.user.update({
         where: { id: targetId },
-        data: { accountStatus: status },
+        data: { accountStatus: status, authVersion: { increment: 1 } },
         select: { id: true, email: true, role: true, accountStatus: true, createdAt: true },
       });
       await transaction.auditLog.create({
@@ -292,13 +476,13 @@ export class AuthService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
-  private async createSession(user: PublicUser, action: string): Promise<AuthSession> {
+  private async createSession(user: PublicUser & { authVersion: number }, action: string): Promise<AuthSession> {
     return this.prisma.$transaction((transaction) => this.persistSession(transaction, user, action));
   }
 
   private async persistSession(
     transaction: Prisma.TransactionClient,
-    user: PublicUser,
+    user: PublicUser & { authVersion: number },
     action: string,
   ): Promise<AuthSession> {
     const refreshToken = newRefreshToken();
@@ -312,19 +496,23 @@ export class AuthService {
     await transaction.auditLog.create({
       data: { actorId: user.id, action },
     });
-    const accessToken = await this.jwt.signAsync(
-      { sub: user.id, role: user.role },
-      {
-        audience: JWT_AUDIENCE,
-        issuer: JWT_ISSUER,
-        expiresIn: '15m',
-      },
-    );
+    const accessToken = await this.issueAccessToken(user.id, user.role, user.authVersion);
     return {
       accessToken,
       refreshToken,
       expiresIn: 15 * 60,
       user: { id: user.id, email: user.email, role: user.role },
     };
+  }
+
+  private issueAccessToken(userId: string, role: UserRole, authVersion: number): Promise<string> {
+    return this.jwt.signAsync(
+      { sub: userId, role, authVersion },
+      {
+        audience: JWT_AUDIENCE,
+        issuer: JWT_ISSUER,
+        expiresIn: '15m',
+      },
+    );
   }
 }

@@ -15,6 +15,18 @@ export class CredentialsDto {
   password!: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  newPassword!: string;
+}
+
 export class AssignRoleDto {
   @IsEnum(UserRole)
   role!: UserRole;

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { RedisThrottlerStorage } from './throttling/redis-throttler.storage.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -15,6 +15,13 @@ import { GeographicAccessGuard } from './geo/geographic-access.guard.js';
 import { SolanaMarketModule } from './solana-market/solana-market.module.js';
 import { FinancialControlsModule } from './financial-controls/financial-controls.module.js';
 import { HealthModule } from './health/health.module.js';
+import { PortfolioPricesModule } from './portfolio-prices/portfolio-prices.module.js';
+import { AuditModule } from './audit/audit.module.js';
+import { ObservabilityModule } from './observability/observability.module.js';
+import { SentryExceptionFilter } from './observability/sentry-exception.filter.js';
+import { TokenScreeningModule } from './token-screening/token-screening.module.js';
+import { AggregatorControlsModule } from './aggregator-controls/aggregator-controls.module.js';
+import { BridgesModule } from './bridges/bridges.module.js';
 
 @Module({
   imports: [
@@ -33,9 +40,16 @@ import { HealthModule } from './health/health.module.js';
     SolanaMarketModule,
     FinancialControlsModule,
     HealthModule,
+    PortfolioPricesModule,
+    TokenScreeningModule,
+    AggregatorControlsModule,
+    BridgesModule,
     SwapsModule,
+    AuditModule,
+    ObservabilityModule,
   ],
   providers: [
+    { provide: APP_FILTER, useClass: SentryExceptionFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: GeographicAccessGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
