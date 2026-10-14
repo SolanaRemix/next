@@ -36,7 +36,9 @@ describe("requestBridgeQuote", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("posts the requested quote to the authenticated API", async () => {
-    const fetch = vi.fn(async () => Response.json(quote));
+    const fetch = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      Response.json(quote),
+    );
     vi.stubGlobal("fetch", fetch);
 
     await expect(requestBridgeQuote(request, "access-token")).resolves.toMatchObject({
