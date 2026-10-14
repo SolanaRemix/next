@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import type { OnboardingPreferenceStore, OnboardingProgress } from "@next/types";
 import { FlashButton, GlassCard } from "@next/ui";
 
@@ -7,7 +6,7 @@ const steps = [
   {
     title: "Welcome to Mega Gods Prompt NEXT",
     detail: "A clear view of your digital assets, with tools designed for informed decisions.",
-    bullets: ["AI-assisted token screening", "Perpetual trading tools", "Multi-aggregator swaps", "Risk-gated flash-loan and arbitrage workflows"],
+    bullets: ["Provider-reported token indicators", "Perpetual risk simulations", "Indicative multi-provider swap quotes", "Wallet-approved swaps and cross-chain quote tools"],
   },
   {
     title: "Connect your wallets",
@@ -22,7 +21,7 @@ const steps = [
   {
     title: "Ready when you are",
     detail: "You can add an invite code below or continue without one.",
-    bullets: ["Onboarding can be replayed from Settings", "Progress is saved on this device"],
+    bullets: ["Replay onboarding from the page header", "Progress is saved with your onboarding preferences"],
   },
 ] as const;
 
@@ -37,7 +36,7 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
   const [step, setStep] = useState(0);
   const [inviteCode, setInviteCode] = useState("");
   const [ready, setReady] = useState(false);
-  const reducedMotion = useReducedMotion();
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (replay) {
@@ -79,25 +78,61 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
     setStep(next);
   }
 
+  useEffect(() => {
+    if (!ready || step === 4) return;
+    const dialog = dialogRef.current;
+    const firstControl = dialog?.querySelector<HTMLElement>(
+      "button:not([disabled]), input:not([disabled]), select:not([disabled])",
+    );
+    firstControl?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Tab" || !dialog) return;
+      const controls = [...dialog.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled]), select:not([disabled])",
+      )];
+      if (controls.length === 0) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [ready, step]);
+
   if (!ready || step === 4) return null;
   const content = steps[step];
   if (!content) return null;
 
   return (
     <div className="onboarding-backdrop">
-      <GlassCard className="onboarding-card" glowColor="orange">
-        <div className="onboarding-progress" aria-label={`Step ${step + 1} of ${steps.length}`}>
+      <GlassCard
+        ref={dialogRef}
+        className="onboarding-card"
+        glowColor="orange"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="onboarding-title"
+        tabIndex={-1}
+      >
+        <div
+          className="onboarding-progress"
+          role="progressbar"
+          aria-label="Onboarding progress"
+          aria-valuemin={1}
+          aria-valuemax={steps.length}
+          aria-valuenow={step + 1}
+        >
           {steps.map((item, index) => <span key={item.title} className={index <= step ? "is-active" : ""} />)}
         </div>
-        <AnimatePresence mode="wait">
-          <motion.section
-            key={step}
-            initial={reducedMotion ? false : { opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reducedMotion ? undefined : { opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-            aria-labelledby="onboarding-title"
-          >
+          <section key={step} className="onboarding-step" aria-labelledby="onboarding-title">
             <p className="eyebrow">GETTING STARTED · {step + 1}/{steps.length}</p>
             <h1 id="onboarding-title">{content.title}</h1>
             <p className="muted">{content.detail}</p>
@@ -113,8 +148,7 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
                 <input autoComplete="off" maxLength={64} value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
               </label>
             )}
-          </motion.section>
-        </AnimatePresence>
+          </section>
         <div className="onboarding-actions">
           <button type="button" className="text-button" onClick={() => void finish(true)}>Skip onboarding</button>
           <div className="button-row">

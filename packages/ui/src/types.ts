@@ -1,20 +1,14 @@
-import type { MouseEventHandler, HTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 
-export interface GlassCardProps {
+export interface GlassCardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
   glowColor?: "orange" | "green" | "red" | "none";
   flashOnUpdate?: boolean;
-  className?: string;
-  onClick?: MouseEventHandler<HTMLDivElement>;
 }
 
-export interface FlashButtonProps {
+export interface FlashButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
   variant?: "primary" | "success" | "danger";
-  onClick?: MouseEventHandler<HTMLButtonElement>;
-  className?: string;
-  disabled?: boolean;
-  type?: "button" | "submit" | "reset";
 }
 
 export interface GlowBadgeProps extends HTMLAttributes<HTMLSpanElement> {

@@ -1,4 +1,3 @@
-import { motion, useReducedMotion } from "framer-motion";
 import type { GlassCardProps } from "./types";
 
 const aura = {
@@ -15,16 +14,13 @@ export function GlassCard({
   className = "",
   ...props
 }: GlassCardProps) {
-  const reducedMotion = useReducedMotion();
   return (
-    <motion.div
-      className={`glass-card ${className}`.trim()}
+    <div
+      className={`glass-card ${flashOnUpdate ? "glass-card--flash" : ""} ${className}`.trim()}
       style={{ boxShadow: aura[glowColor] }}
-      animate={flashOnUpdate && !reducedMotion ? { filter: ["brightness(1)", "brightness(1.4)", "brightness(1)"] } : undefined}
-      transition={{ duration: 0.55, times: [0, 0.25, 1] }}
       {...props}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }
