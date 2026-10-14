@@ -144,7 +144,7 @@ describe('SwapQuoteService', () => {
   });
 
   it('opens a failing provider circuit while continuing to return healthy aggregator quotes', async () => {
-    delete process.env.ONEINCH_API_KEY;
+    process.env.ONEINCH_API_KEY = 'test-key';
     const failureCounts = new Map<string, number>();
     const isQuoteProviderCircuitOpen = vi.fn(async (provider: string) =>
       (failureCounts.get(provider) ?? 0) >= 5);
@@ -162,7 +162,9 @@ describe('SwapQuoteService', () => {
     const quoteService = new SwapQuoteService(cache);
     const zeroXFetch = vi.fn(async () => new Response('{}', { status: 503 }));
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
-      if (new URL(String(input)).hostname === 'api.0x.org') return zeroXFetch();
+      const hostname = new URL(String(input)).hostname;
+      if (hostname === 'api.0x.org') return zeroXFetch();
+      if (hostname === 'api.1inch.dev') return Response.json({ dstAmount: '1800' });
       return Response.json({ priceRoute: { destAmount: '2000' } });
     }));
 
@@ -174,7 +176,7 @@ describe('SwapQuoteService', () => {
     expect(zeroXFetch).toHaveBeenCalledTimes(5);
     expect(recordQuoteProviderFailure).toHaveBeenCalledTimes(5);
     expect(isQuoteProviderCircuitOpen).toHaveBeenCalledWith('0x');
-    expect(result?.routes.map((route) => route.provider)).toEqual(['paraswap']);
+    expect(result?.routes.map((route) => route.provider)).toEqual(['paraswap', '1inch']);
     expect(result?.unavailableProviders).toContain('0x');
   });
 });

@@ -137,7 +137,7 @@ describe('RedisThrottlerStorage', () => {
     await expect(failure.storage.recordQuoteProviderFailure('0x', 30_000, 5, 15_000))
       .resolves.toBe(true);
     expect(failure.client.eval).toHaveBeenCalledWith(
-      expect.stringContaining('redis.call(\\'INCR\\''),
+      expect.stringContaining("redis.call('INCR'"),
       { keys: [failuresKey, openKey], arguments: ['30000', '5', '15000'] },
     );
 
