@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  background: #090b0d;
+  background: radial-gradient(ellipse at 50% -30%, rgba(255, 87, 34, 0.13), transparent 55%), #090b0d;
   color: #f4f5f6;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -12,13 +12,15 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input { font: inherit; }
 button { color: inherit; }
 
-.app-shell { margin: 0 auto; max-width: 1180px; min-height: 100vh; padding: 0 28px; }
+.app-shell { margin: 0 auto; max-width: 1180px; min-height: 100vh; padding: 0 max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left)); }
 .app-header { align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; min-height: 76px; }
 .brand { align-items: center; color: #f4f5f6; display: flex; font-size: 0.83rem; font-weight: 800; gap: 9px; letter-spacing: 0.06em; text-decoration: none; }
 .brand > span:last-child { color: var(--brand-orange); }
 .brand-mark { align-items: center; background: var(--brand-orange); border-radius: 10px; color: #090b0d; display: inline-flex; height: 34px; justify-content: center; width: 34px; }
-.text-button { background: none; border: 0; color: var(--text-muted); cursor: pointer; padding: 8px; }
+.text-button { background: none; border: 0; border-radius: 8px; color: var(--text-muted); cursor: pointer; min-height: 44px; padding: 8px 10px; transition: color 160ms ease, background-color 160ms ease; }
 .text-button:hover { color: var(--text-primary); }
+.text-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #ff8a65; outline-offset: 2px; }
+.text-button:disabled { cursor: not-allowed; opacity: 0.55; }
 .hero { padding: 66px 0 32px; }
 .hero h1 { font-size: clamp(2.2rem, 6vw, 4rem); letter-spacing: -0.06em; line-height: 1.04; margin: 10px 0 14px; max-width: 720px; }
 .hero h1 span { color: var(--brand-orange); }
@@ -202,8 +204,11 @@ button { color: inherit; }
 .message--success { color: var(--positive-green); }
 .message button { background: none; border: 0; color: inherit; cursor: pointer; text-decoration: underline; }
 footer { color: var(--text-muted); font-size: 0.78rem; padding: 30px 0; }
-.onboarding-backdrop { align-items: center; background: rgba(3, 5, 7, 0.82); display: flex; inset: 0; justify-content: center; padding: 18px; position: fixed; z-index: 10; }
+.onboarding-backdrop { align-items: center; background: rgba(3, 5, 7, 0.82); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: flex; inset: 0; justify-content: center; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); position: fixed; z-index: 10; }
 .onboarding-card { max-height: min(680px, 94vh); max-width: 620px; overflow-y: auto; padding: clamp(22px, 5vw, 40px); width: 100%; }
+.onboarding-card:focus { outline: none; }
+.onboarding-step { animation: onboarding-enter 220ms ease-out both; }
+@keyframes onboarding-enter { from { opacity: 0.5; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .onboarding-progress { display: flex; gap: 7px; margin-bottom: 28px; }
 .onboarding-progress span { background: rgba(255, 255, 255, 0.12); border-radius: 4px; flex: 1; height: 4px; }
 .onboarding-progress span.is-active { background: var(--brand-orange); box-shadow: 0 0 10px rgba(255, 87, 34, 0.65); }
@@ -213,10 +218,27 @@ footer { color: var(--text-muted); font-size: 0.78rem; padding: 30px 0; }
 .onboarding-wallets { margin: 20px 0; }
 .invite-input { margin: 20px 0; }
 .onboarding-actions { align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; padding-top: 18px; }
+.onboarding-actions .button-row { justify-content: flex-end; }
+.dashboard-grid > .glass-card, .perpetual-panel, .swap-panel, .solana-market-panel, .token-screening-panel { box-shadow: 0 16px 44px rgba(0, 0, 0, 0.18); }
+.portfolio-token, .solana-token-row, .swap-result, .token-screening-result, .risk-result, .balance-tile {
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.portfolio-token:hover, .solana-token-row:hover, .swap-result:hover, .token-screening-result:hover, .risk-result:hover {
+  background-color: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.message { border-radius: 10px; line-height: 1.55; }
+.message--error { color: #ff8f8f; }
+.message--success { color: #70f0b0; }
+footer { padding-bottom: max(30px, env(safe-area-inset-bottom)); }
 
 @media (max-width: 740px) {
-  .app-shell { padding: 0 17px; }
-  .hero { padding-top: 48px; }
+  .app-shell { padding-left: max(17px, env(safe-area-inset-left)); padding-right: max(17px, env(safe-area-inset-right)); }
+  .app-header { gap: 10px; min-height: 68px; }
+  .brand { font-size: 0.72rem; gap: 6px; }
+  .brand-mark { flex: 0 0 32px; height: 32px; width: 32px; }
+  .text-button { padding-left: 7px; padding-right: 7px; }
+  .hero { padding-top: 42px; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .perpetual-fields, .risk-result dl { grid-template-columns: 1fr; }
   .token-screening-form { grid-template-columns: 1fr; }
@@ -227,5 +249,12 @@ footer { color: var(--text-muted); font-size: 0.78rem; padding: 30px 0; }
   .auth-form { grid-template-columns: 1fr; }
   .auth-note, .auth-actions { grid-column: auto; }
   .wallet-account { align-items: start; flex-direction: column; }
-  .onboarding-actions { align-items: flex-start; gap: 10px; }
+  .onboarding-actions { align-items: stretch; flex-direction: column-reverse; gap: 8px; }
+  .onboarding-actions > .text-button { align-self: flex-start; }
+  .onboarding-actions .button-row { justify-content: space-between; }
+  .onboarding-card { max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); }
+  .auth-panel, .financial-controls-panel, .user-management-panel, .audit-log-panel, .wallet-panel,
+  .security-card, .swap-panel, .solana-market-panel, .token-screening-panel, .perpetual-panel { padding: 20px; }
+  .token-screening-signals { gap: 14px; }
+  .flash-button { min-height: 48px; }
 }

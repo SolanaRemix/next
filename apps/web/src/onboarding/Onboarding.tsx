@@ -36,6 +36,8 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
   const [step, setStep] = useState(0);
   const [inviteCode, setInviteCode] = useState("");
   const [ready, setReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,7 +51,9 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
     void (store?.load() ?? Promise.resolve(null))
       .catch(() => null)
       .then((progress) => {
-        if (active && progress) setStep(progress.completed || progress.skipped ? 4 : progress.step);
+        if (active && progress) setStep(
+          progress.completed || progress.skipped ? 4 : Math.min(Math.max(progress.step, 0), steps.length - 1),
+        );
         setReady(active);
       });
     return () => { active = false; };
@@ -67,15 +71,31 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
   }
 
   async function finish(skipped: boolean) {
-    await saveProgress(4, !skipped, skipped, inviteCode.trim() || undefined);
-    setStep(4);
-    onComplete?.();
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await saveProgress(4, !skipped, skipped, inviteCode.trim() || undefined);
+      setStep(4);
+      onComplete?.();
+    } catch {
+      setSaveError("Your progress could not be saved. Check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function advance() {
     const next = Math.min(step + 1, steps.length - 1);
-    await saveProgress(next, false, false);
-    setStep(next);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await saveProgress(next, false, false);
+      setStep(next);
+    } catch {
+      setSaveError("Your progress could not be saved. Check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   useEffect(() => {
@@ -132,30 +152,31 @@ export function Onboarding({ store, onComplete, onConnectWallet, replay = false 
         >
           {steps.map((item, index) => <span key={item.title} className={index <= step ? "is-active" : ""} />)}
         </div>
-          <section key={step} className="onboarding-step" aria-labelledby="onboarding-title">
-            <p className="eyebrow">GETTING STARTED · {step + 1}/{steps.length}</p>
-            <h1 id="onboarding-title">{content.title}</h1>
-            <p className="muted">{content.detail}</p>
-            <ul>{content.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
-            {step === 1 && (
-              <div className="button-row onboarding-wallets">
-                <FlashButton onClick={() => onConnectWallet?.("evm")}>Connect EVM</FlashButton>
-                <FlashButton variant="success" onClick={() => onConnectWallet?.("solana")}>Connect Solana</FlashButton>
-              </div>
-            )}
-            {step === 3 && (
-              <label className="invite-input">Invite code (optional)
-                <input autoComplete="off" maxLength={64} value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
-              </label>
-            )}
-          </section>
+        <section key={step} className="onboarding-step" aria-labelledby="onboarding-title">
+          <p className="eyebrow">GETTING STARTED · {step + 1}/{steps.length}</p>
+          <h1 id="onboarding-title">{content.title}</h1>
+          <p className="muted">{content.detail}</p>
+          <ul>{content.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}</ul>
+          {step === 1 && (
+            <div className="button-row onboarding-wallets">
+              <FlashButton onClick={() => onConnectWallet?.("evm")}>Connect EVM</FlashButton>
+              <FlashButton variant="success" onClick={() => onConnectWallet?.("solana")}>Connect Solana</FlashButton>
+            </div>
+          )}
+          {step === 3 && (
+            <label className="invite-input">Invite code (optional)
+              <input autoComplete="off" maxLength={64} value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} />
+            </label>
+          )}
+        </section>
+        {saveError && <p className="message message--error" role="alert">{saveError}</p>}
         <div className="onboarding-actions">
-          <button type="button" className="text-button" onClick={() => void finish(true)}>Skip onboarding</button>
+          <button type="button" className="text-button" disabled={saving} onClick={() => void finish(true)}>Skip onboarding</button>
           <div className="button-row">
-            {step > 0 && <button type="button" className="text-button" onClick={() => setStep(step - 1)}>Back</button>}
+            {step > 0 && <button type="button" className="text-button" disabled={saving} onClick={() => setStep(step - 1)}>Back</button>}
             {step < steps.length - 1
-              ? <FlashButton onClick={() => void advance()}>Continue</FlashButton>
-              : <FlashButton onClick={() => void finish(false)}>Finish</FlashButton>}
+              ? <FlashButton disabled={saving} onClick={() => void advance()}>{saving ? "Saving…" : "Continue"}</FlashButton>
+              : <FlashButton disabled={saving} onClick={() => void finish(false)}>{saving ? "Saving…" : "Finish"}</FlashButton>}
           </div>
         </div>
       </GlassCard>

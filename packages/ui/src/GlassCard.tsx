@@ -1,3 +1,4 @@
+import { forwardRef } from "react";
 import type { GlassCardProps } from "./types";
 
 const aura = {
@@ -7,15 +8,16 @@ const aura = {
   none: "none",
 } as const;
 
-export function GlassCard({
+export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(function GlassCard({
   children,
   glowColor = "none",
   flashOnUpdate = false,
   className = "",
   ...props
-}: GlassCardProps) {
+}, ref) {
   return (
     <div
+      ref={ref}
       className={`glass-card ${flashOnUpdate ? "glass-card--flash" : ""} ${className}`.trim()}
       style={{ boxShadow: aura[glowColor] }}
       {...props}
@@ -23,4 +25,4 @@ export function GlassCard({
       {children}
     </div>
   );
-}
+});
