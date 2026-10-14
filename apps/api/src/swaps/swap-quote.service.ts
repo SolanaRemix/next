@@ -15,6 +15,9 @@ import { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js'
 
 const quoteTimeoutMs = 8_000;
 const quoteCacheTtlMs = 3_000;
+const circuitFailureWindowMs = 30_000;
+const circuitFailureThreshold = 5;
+const circuitOpenDurationMs = 15_000;
 const providerNames: EvmQuoteProvider[] = ['0x', '1inch', 'paraswap'];
 const oneInchChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
 const zeroXChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
@@ -239,10 +242,25 @@ export class SwapQuoteService {
       }
     }
     const outcomes = await Promise.allSettled(
-      this.providers.map(async (provider) => ({
-        provider: provider.name,
-        result: await provider.quote(request),
-      })),
+      this.providers.map(async (provider) => {
+        if (await this.cache?.isQuoteProviderCircuitOpen(provider.name)) {
+          throw new Error('Quote provider circuit is open.');
+        }
+        let result: ProviderQuoteResult;
+        try {
+          result = await provider.quote(request);
+        } catch (error) {
+          await this.cache?.recordQuoteProviderFailure(
+            provider.name,
+            circuitFailureWindowMs,
+            circuitFailureThreshold,
+            circuitOpenDurationMs,
+          );
+          throw error;
+        }
+        await this.cache?.recordQuoteProviderSuccess(provider.name);
+        return { provider: provider.name, result };
+      }),
     );
     const routes: SwapRouteQuote[] = [];
     const succeeded = new Set<EvmQuoteProvider>();

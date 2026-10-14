@@ -121,6 +121,44 @@ describe('RedisThrottlerStorage', () => {
       .resolves.toBeUndefined();
   });
 
+  it('shares quote-provider circuit state and opens it after the configured failure threshold', async () => {
+    const providerHash = (await import('node:crypto'))
+      .createHash('sha256').update('0x').digest('hex');
+    const failuresKey = `test:throttle:quote-circuit:{${providerHash}}:failures`;
+    const openKey = `test:throttle:quote-circuit:{${providerHash}}:open`;
+    const openCheck = createStorage('open');
+    await expect(openCheck.storage.isQuoteProviderCircuitOpen('0x')).resolves.toBe(true);
+    expect(openCheck.client.eval).toHaveBeenCalledWith(
+      "return redis.call('GET', KEYS[1])",
+      { keys: [openKey], arguments: [] },
+    );
+
+    const failure = createStorage(1);
+    await expect(failure.storage.recordQuoteProviderFailure('0x', 30_000, 5, 15_000))
+      .resolves.toBe(true);
+    expect(failure.client.eval).toHaveBeenCalledWith(
+      expect.stringContaining('redis.call(\\'INCR\\''),
+      { keys: [failuresKey, openKey], arguments: ['30000', '5', '15000'] },
+    );
+
+    const success = createStorage(1);
+    await expect(success.storage.recordQuoteProviderSuccess('0x')).resolves.toBeUndefined();
+    expect(success.client.eval).toHaveBeenCalledWith(
+      "redis.call('DEL', KEYS[1]); return 1",
+      { keys: [failuresKey], arguments: [] },
+    );
+  });
+
+  it('fails closed when Redis cannot determine provider circuit state', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const unavailable = createStorage();
+    unavailable.client.eval.mockRejectedValue(new Error('connection lost'));
+    await expect(unavailable.storage.isQuoteProviderCircuitOpen('0x'))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(unavailable.storage.recordQuoteProviderFailure('0x', 30_000, 5, 15_000))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
   it('fails readiness when configured Redis is disconnected or unavailable', async () => {
     const disconnected = createStorage();
     await expect(disconnected.storage.checkHealth()).rejects.toMatchObject({ status: 503 });

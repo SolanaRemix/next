@@ -53,6 +53,20 @@ return { hits, ttl, 0, 0 }
 
 const READ_QUOTE_CACHE_SCRIPT = `return redis.call('GET', KEYS[1])`;
 const WRITE_QUOTE_CACHE_SCRIPT = `return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])`;
+const READ_QUOTE_CIRCUIT_SCRIPT = `return redis.call('GET', KEYS[1])`;
+const RECORD_QUOTE_CIRCUIT_SUCCESS_SCRIPT = `redis.call('DEL', KEYS[1]); return 1`;
+const RECORD_QUOTE_CIRCUIT_FAILURE_SCRIPT = `
+local failures = redis.call('INCR', KEYS[1])
+if failures == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+if failures >= tonumber(ARGV[2]) then
+  redis.call('PSETEX', KEYS[2], ARGV[3], 'open')
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+`;
 
 @Injectable()
 export class RedisThrottlerStorage
@@ -130,6 +144,80 @@ export class RedisThrottlerStorage
       this.logger.error('Redis returned an invalid quote-cache write response.');
       throw new ServiceUnavailableException('Shared quote caching is temporarily unavailable.');
     }
+  }
+
+  async isQuoteProviderCircuitOpen(provider: string): Promise<boolean> {
+    if (!this.client) return false;
+    const [, openKey] = this.quoteCircuitKeys(provider);
+    let result: unknown;
+    try {
+      result = await this.client.eval(READ_QUOTE_CIRCUIT_SCRIPT, {
+        keys: [openKey],
+        arguments: [],
+      });
+    } catch {
+      this.logger.error('Redis quote circuit read failed.');
+      throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
+    }
+    if (result === null || result === undefined) return false;
+    if (result === 'open') return true;
+    this.logger.error('Redis returned an invalid quote circuit state.');
+    throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
+  }
+
+  async recordQuoteProviderSuccess(provider: string): Promise<void> {
+    if (!this.client) return;
+    const [failuresKey] = this.quoteCircuitKeys(provider);
+    let result: unknown;
+    try {
+      result = await this.client.eval(RECORD_QUOTE_CIRCUIT_SUCCESS_SCRIPT, {
+        keys: [failuresKey],
+        arguments: [],
+      });
+    } catch {
+      this.logger.error('Redis quote circuit success update failed.');
+      throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
+    }
+    if (Number(result) !== 1) {
+      this.logger.error('Redis returned an invalid quote circuit success response.');
+      throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
+    }
+  }
+
+  async recordQuoteProviderFailure(
+    provider: string,
+    failureWindowMs: number,
+    failureThreshold: number,
+    openDurationMs: number,
+  ): Promise<boolean> {
+    if (!this.client) return false;
+    const [failuresKey, openKey] = this.quoteCircuitKeys(provider);
+    let result: unknown;
+    try {
+      result = await this.client.eval(RECORD_QUOTE_CIRCUIT_FAILURE_SCRIPT, {
+        keys: [failuresKey, openKey],
+        arguments: [
+          String(failureWindowMs),
+          String(failureThreshold),
+          String(openDurationMs),
+        ],
+      });
+    } catch {
+      this.logger.error('Redis quote circuit failure update failed.');
+      throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
+    }
+    if (result === 0 || result === 1) return result === 1;
+    this.logger.error('Redis returned an invalid quote circuit failure response.');
+    throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
+  }
+
+  private quoteCircuitKeys(provider: string): [string, string] {
+    const identity = createHash('sha256').update(provider, 'utf8').digest('hex');
+    const hashTag = `{${identity}}`;
+    return [
+      `${this.namespace}:quote-circuit:${hashTag}:failures`,
+      `${this.namespace}:quote-circuit:${hashTag}:open`,
+    ];
   }
 
   async increment(

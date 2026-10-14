@@ -85,7 +85,13 @@ describe('SwapQuoteService', () => {
     const setQuoteCache = vi.fn(async (key: string, value: string, ttlMs: number) => {
       quoteEntries.set(key, value);
     });
-    const cache = { getQuoteCache, setQuoteCache } as unknown as RedisThrottlerStorage;
+    const cache = {
+      getQuoteCache,
+      setQuoteCache,
+      isQuoteProviderCircuitOpen: vi.fn().mockResolvedValue(false),
+      recordQuoteProviderSuccess: vi.fn().mockResolvedValue(undefined),
+      recordQuoteProviderFailure: vi.fn().mockResolvedValue(false),
+    } as unknown as RedisThrottlerStorage;
     const quoteService = new SwapQuoteService(cache);
     const fetch = vi.fn(async (input: string | URL | Request) => {
       const hostname = new URL(String(input)).hostname;
@@ -117,6 +123,9 @@ describe('SwapQuoteService', () => {
     const quoteService = new SwapQuoteService({
       getQuoteCache,
       setQuoteCache,
+      isQuoteProviderCircuitOpen: vi.fn().mockResolvedValue(false),
+      recordQuoteProviderSuccess: vi.fn().mockResolvedValue(undefined),
+      recordQuoteProviderFailure: vi.fn().mockResolvedValue(false),
     } as unknown as RedisThrottlerStorage);
     const fetch = vi.fn(async (input: string | URL | Request) => {
       const hostname = new URL(String(input)).hostname;
@@ -132,5 +141,40 @@ describe('SwapQuoteService', () => {
     expect(fetch).toHaveBeenCalledTimes(6);
     expect(getQuoteCache.mock.calls[0]?.[0]).not.toBe(getQuoteCache.mock.calls[1]?.[0]);
     expect(setQuoteCache).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens a failing provider circuit while continuing to return healthy aggregator quotes', async () => {
+    delete process.env.ONEINCH_API_KEY;
+    const failureCounts = new Map<string, number>();
+    const isQuoteProviderCircuitOpen = vi.fn(async (provider: string) =>
+      (failureCounts.get(provider) ?? 0) >= 5);
+    const recordQuoteProviderFailure = vi.fn(async (provider: string) => {
+      failureCounts.set(provider, (failureCounts.get(provider) ?? 0) + 1);
+      return (failureCounts.get(provider) ?? 0) >= 5;
+    });
+    const cache = {
+      getQuoteCache: vi.fn().mockResolvedValue(null),
+      setQuoteCache: vi.fn().mockResolvedValue(undefined),
+      isQuoteProviderCircuitOpen,
+      recordQuoteProviderSuccess: vi.fn().mockResolvedValue(undefined),
+      recordQuoteProviderFailure,
+    } as unknown as RedisThrottlerStorage;
+    const quoteService = new SwapQuoteService(cache);
+    const zeroXFetch = vi.fn(async () => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      if (new URL(String(input)).hostname === 'api.0x.org') return zeroXFetch();
+      return Response.json({ priceRoute: { destAmount: '2000' } });
+    }));
+
+    let result: Awaited<ReturnType<SwapQuoteService['quote']>> | undefined;
+    for (let index = 0; index < 6; index += 1) {
+      result = await quoteService.quote({ ...request, sellAmount: String(1_000_000 + index) });
+    }
+
+    expect(zeroXFetch).toHaveBeenCalledTimes(5);
+    expect(recordQuoteProviderFailure).toHaveBeenCalledTimes(5);
+    expect(isQuoteProviderCircuitOpen).toHaveBeenCalledWith('0x');
+    expect(result?.routes.map((route) => route.provider)).toEqual(['paraswap']);
+    expect(result?.unavailableProviders).toContain('0x');
   });
 });
