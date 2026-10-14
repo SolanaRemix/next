@@ -164,6 +164,14 @@ export class RedisThrottlerStorage
     }
   }
 
+  async getTokenScreeningCache(key: string): Promise<string | null> {
+    return this.getCacheValue(`${this.namespace}:token-screening:{${key}}`);
+  }
+
+  async setTokenScreeningCache(key: string, value: string, ttlMs: number): Promise<void> {
+    await this.setCacheValue(`${this.namespace}:token-screening:{${key}}`, value, ttlMs);
+  }
+
   async claimQuoteProviderAttempt(provider: string, probeLeaseMs: number): Promise<boolean> {
     if (!this.client) return true;
     const [, openKey, recoveryKey, probeKey] = this.quoteCircuitKeys(provider);
@@ -237,6 +245,41 @@ export class RedisThrottlerStorage
       `${this.namespace}:quote-circuit:${hashTag}:recovery`,
       `${this.namespace}:quote-circuit:${hashTag}:probe`,
     ];
+  }
+
+  private async getCacheValue(key: string): Promise<string | null> {
+    if (!this.client) return null;
+    let result: unknown;
+    try {
+      result = await this.client.eval(READ_QUOTE_CACHE_SCRIPT, { keys: [key], arguments: [] });
+    } catch {
+      this.logger.error('Redis screening-cache read failed.');
+      throw new ServiceUnavailableException('Shared screening cache is temporarily unavailable.');
+    }
+    if (result === null || result === undefined) return null;
+    if (typeof result !== 'string') {
+      this.logger.error('Redis returned an invalid screening-cache value.');
+      throw new ServiceUnavailableException('Shared screening cache is temporarily unavailable.');
+    }
+    return result;
+  }
+
+  private async setCacheValue(key: string, value: string, ttlMs: number): Promise<void> {
+    if (!this.client) return;
+    let result: unknown;
+    try {
+      result = await this.client.eval(WRITE_QUOTE_CACHE_SCRIPT, {
+        keys: [key],
+        arguments: [String(ttlMs), value],
+      });
+    } catch {
+      this.logger.error('Redis screening-cache write failed.');
+      throw new ServiceUnavailableException('Shared screening cache is temporarily unavailable.');
+    }
+    if (result !== 'OK') {
+      this.logger.error('Redis returned an invalid screening-cache write response.');
+      throw new ServiceUnavailableException('Shared screening cache is temporarily unavailable.');
+    }
   }
 
   async increment(

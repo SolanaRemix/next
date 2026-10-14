@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import type {
   EvmTokenRiskLevel,
   EvmTokenRiskScreeningResponse,
@@ -6,8 +12,11 @@ import type {
   SolanaTokenRiskScreeningResponse,
   SolanaTokenRiskSignals,
 } from '@next/types';
+import { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js';
 
 const requestTimeoutMs = 8_000;
+const screeningCacheTtlMs = 10_000;
+const riskLevels = ['unknown', 'low', 'medium', 'high', 'critical'] as const;
 const supportedChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
 const contractAddressPattern = /^0x[a-fA-F0-9]{40}$/;
 const solanaMintPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -18,6 +27,106 @@ type RawData = Record<string, unknown>;
 
 function isRecord(value: unknown): value is RawData {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function screeningCacheKey(identity: string): string {
+  return createHash('sha256').update(identity, 'utf8').digest('hex');
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function isEvmSignals(value: unknown): value is EvmTokenRiskSignals {
+  if (!isRecord(value)) return false;
+  const booleanKeys: Array<keyof EvmTokenRiskSignals> = [
+    'honeypot',
+    'openSource',
+    'proxy',
+    'mintable',
+    'ownershipRecoverable',
+    'ownerCanChangeBalance',
+    'hiddenOwner',
+    'selfDestruct',
+    'externalCall',
+    'blacklisted',
+    'transferPausable',
+    'slippageModifiable',
+  ];
+  return booleanKeys.every((key) => value[key] === null || typeof value[key] === 'boolean') &&
+    ['buyTaxPercent', 'sellTaxPercent'].every((key) =>
+      value[key] === null ||
+      (typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 100));
+}
+
+function isValidCachedEvmResponse(
+  value: unknown,
+  chainId: string,
+  tokenAddress: string,
+): value is EvmTokenRiskScreeningResponse {
+  if (!isRecord(value) || !isEvmSignals(value.signals)) return false;
+  const assessment = assessRisk(value.signals);
+  const observedSignals = signalCoverage(value.signals);
+  return value.chainId === chainId &&
+    value.tokenAddress === tokenAddress &&
+    value.source === 'GoPlus' &&
+    (value.riskScore === null ||
+      (typeof value.riskScore === 'number' && Number.isFinite(value.riskScore) &&
+        value.riskScore >= 0 && value.riskScore <= 100)) &&
+    riskLevels.includes(value.riskLevel as (typeof riskLevels)[number]) &&
+    value.riskScore === assessment.riskScore &&
+    value.riskLevel === assessment.riskLevel &&
+    value.observedSignals === observedSignals &&
+    value.totalSignals === Object.keys(value.signals).length &&
+    Array.isArray(value.indicators) &&
+    JSON.stringify(value.indicators) === JSON.stringify(assessment.indicators) &&
+    validTimestamp(value.asOf) &&
+    value.disclaimer === disclaimer;
+}
+
+function isSolanaSignals(value: unknown): value is SolanaTokenRiskSignals {
+  if (!isRecord(value)) return false;
+  const keys: Array<keyof SolanaTokenRiskSignals> = [
+    'mintable',
+    'freezable',
+    'closable',
+    'balanceMutable',
+    'metadataMutable',
+    'transferFeeEnabled',
+    'transferFeeUpgradable',
+    'transferHookPresent',
+    'maliciousTransferHook',
+    'transferHookUpgradable',
+    'defaultAccountFrozen',
+    'defaultAccountStateUpgradable',
+    'nonTransferable',
+    'trustedToken',
+  ];
+  return keys.every((key) => value[key] === null || typeof value[key] === 'boolean');
+}
+
+function isValidCachedSolanaResponse(
+  value: unknown,
+  mint: string,
+): value is SolanaTokenRiskScreeningResponse {
+  if (!isRecord(value) || !isSolanaSignals(value.signals)) return false;
+  const assessment = assessSolanaRisk(value.signals);
+  const observedSignals = Object.values(value.signals).filter((signal) => signal !== null).length;
+  return value.network === 'solana-mainnet' &&
+    value.tokenAddress === mint &&
+    value.source === 'GoPlus Solana beta' &&
+    (value.riskScore === null ||
+      (typeof value.riskScore === 'number' && Number.isFinite(value.riskScore) &&
+        value.riskScore >= 0 && value.riskScore <= 100)) &&
+    riskLevels.includes(value.riskLevel as (typeof riskLevels)[number]) &&
+    value.riskScore === assessment.riskScore &&
+    value.riskLevel === assessment.riskLevel &&
+    value.observedSignals === observedSignals &&
+    value.totalSignals === Object.keys(value.signals).length &&
+    Array.isArray(value.indicators) &&
+    JSON.stringify(value.indicators) === JSON.stringify(assessment.indicators) &&
+    validTimestamp(value.asOf) &&
+    value.disclaimer === solanaDisclaimer;
 }
 
 function parseBoolean(value: unknown): boolean | null {
@@ -212,6 +321,27 @@ function assessSolanaRisk(
 
 @Injectable()
 export class TokenScreeningService {
+  constructor(
+    @Optional() private readonly cache?: RedisThrottlerStorage,
+  ) {}
+
+  private async readCache(key: string): Promise<unknown> {
+    try {
+      const cached = await this.cache?.getTokenScreeningCache(key);
+      return cached ? JSON.parse(cached) as unknown : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeCache(key: string, value: unknown): Promise<void> {
+    try {
+      await this.cache?.setTokenScreeningCache(key, JSON.stringify(value), screeningCacheTtlMs);
+    } catch {
+      // Screening remains available from the provider when its optional cache is unavailable.
+    }
+  }
+
   async screenEvmToken(
     requestedChainId: string,
     requestedTokenAddress: string,
@@ -225,6 +355,9 @@ export class TokenScreeningService {
     }
 
     const tokenAddress = requestedTokenAddress.toLowerCase();
+    const key = screeningCacheKey(`evm:${chainId}:${tokenAddress}`);
+    const cached = await this.readCache(key);
+    if (isValidCachedEvmResponse(cached, chainId, tokenAddress)) return cached;
     const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
     url.searchParams.set('contract_addresses', tokenAddress);
 
@@ -245,7 +378,7 @@ export class TokenScreeningService {
     const signals = isRecord(tokenResult) ? parseSignals(tokenResult) : parseSignals({});
     const assessment = assessRisk(signals);
 
-    return {
+    const screening: EvmTokenRiskScreeningResponse = {
       chainId,
       tokenAddress,
       source: 'GoPlus',
@@ -256,6 +389,8 @@ export class TokenScreeningService {
       asOf: new Date().toISOString(),
       disclaimer,
     };
+    await this.writeCache(key, screening);
+    return screening;
   }
 
   async screenSolanaToken(mint: string): Promise<SolanaTokenRiskScreeningResponse> {
@@ -264,6 +399,9 @@ export class TokenScreeningService {
     }
 
     const normalizedMint = mint;
+    const key = screeningCacheKey(`solana:${normalizedMint}`);
+    const cached = await this.readCache(key);
+    if (isValidCachedSolanaResponse(cached, normalizedMint)) return cached;
     const url = new URL('https://api.gopluslabs.io/api/v1/solana/token_security');
     url.searchParams.set('contract_addresses', normalizedMint);
 
@@ -285,7 +423,7 @@ export class TokenScreeningService {
       .find(([address]) => address === normalizedMint)?.[1];
     const signals = isRecord(tokenResult) ? parseSolanaSignals(tokenResult) : parseSolanaSignals({});
 
-    return {
+    const screening: SolanaTokenRiskScreeningResponse = {
       network: 'solana-mainnet',
       tokenAddress: normalizedMint,
       source: 'GoPlus Solana beta',
@@ -296,5 +434,7 @@ export class TokenScreeningService {
       asOf: new Date().toISOString(),
       disclaimer: solanaDisclaimer,
     };
+    await this.writeCache(key, screening);
+    return screening;
   }
 }

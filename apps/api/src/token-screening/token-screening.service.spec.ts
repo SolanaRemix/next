@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { TokenScreeningService } from './token-screening.service.js';
+import type { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js';
 
 const tokenAddress = '0x2222222222222222222222222222222222222222';
 const solanaMint = 'So11111111111111111111111111111111111111112';
@@ -100,6 +101,89 @@ describe('TokenScreeningService', () => {
       observedSignals: 2,
       signals: { honeypot: false, openSource: true, mintable: null },
     });
+
+    it('caches validated EVM screening results for ten seconds with a hashed, normalized key', async () => {
+      const entries = new Map<string, string>();
+      const getTokenScreeningCache = vi.fn(async (key: string) => entries.get(key) ?? null);
+      const setTokenScreeningCache = vi.fn(async (key: string, value: string, _ttlMs: number) => {
+        entries.set(key, value);
+      });
+      const cache = {
+        getTokenScreeningCache,
+        setTokenScreeningCache,
+      } as unknown as RedisThrottlerStorage;
+      const service = new TokenScreeningService(cache);
+      const fetch = stubProvider({ code: 1, result: { [tokenAddress]: baselineSignals } });
+
+      const first = await service.screenEvmToken('1', tokenAddress);
+      const second = await service.screenEvmToken('0x1', tokenAddress.toUpperCase());
+
+      expect(second).toEqual(first);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(setTokenScreeningCache).toHaveBeenCalledOnce();
+      const key = getTokenScreeningCache.mock.calls[0]?.[0];
+      expect(key).toMatch(/^[a-f0-9]{64}$/);
+      expect(key).not.toContain(tokenAddress);
+      expect(key).toBe(getTokenScreeningCache.mock.calls[1]?.[0]);
+      expect(setTokenScreeningCache.mock.calls[0]?.[2]).toBe(10_000);
+    });
+
+    it('ignores inconsistent cached screening data and falls back to the provider', async () => {
+      const inconsistent = {
+        chainId: '1',
+        tokenAddress,
+        source: 'GoPlus',
+        riskScore: 100,
+        riskLevel: 'low',
+        observedSignals: 14,
+        totalSignals: 14,
+        signals: {
+          honeypot: false,
+          openSource: true,
+          proxy: false,
+          mintable: false,
+          ownershipRecoverable: false,
+          ownerCanChangeBalance: false,
+          hiddenOwner: false,
+          selfDestruct: false,
+          externalCall: false,
+          blacklisted: false,
+          transferPausable: false,
+          slippageModifiable: false,
+          buyTaxPercent: 0,
+          sellTaxPercent: 0,
+        },
+        indicators: [],
+        asOf: new Date().toISOString(),
+        disclaimer: 'Risk indicators are provider-reported heuristics, may be incomplete or inaccurate, and are not a safety guarantee or financial advice.',
+      };
+      const getTokenScreeningCache = vi.fn().mockResolvedValue(JSON.stringify(inconsistent));
+      const setTokenScreeningCache = vi.fn().mockResolvedValue(undefined);
+      const service = new TokenScreeningService({
+        getTokenScreeningCache,
+        setTokenScreeningCache,
+      } as unknown as RedisThrottlerStorage);
+      const fetch = stubProvider({ code: 1, result: { [tokenAddress]: baselineSignals } });
+
+      const response = await service.screenEvmToken('1', tokenAddress);
+
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(response.riskLevel).toBe('low');
+      expect(setTokenScreeningCache).toHaveBeenCalledOnce();
+    });
+
+    it('continues with GoPlus when the optional Redis screening cache fails', async () => {
+      const service = new TokenScreeningService({
+        getTokenScreeningCache: vi.fn().mockRejectedValue(new Error('redis unavailable')),
+        setTokenScreeningCache: vi.fn().mockRejectedValue(new Error('redis unavailable')),
+      } as unknown as RedisThrottlerStorage);
+      const fetch = stubProvider({ code: 1, result: { [tokenAddress]: baselineSignals } });
+
+      const response = await service.screenEvmToken('1', tokenAddress);
+
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(response.riskLevel).toBe('low');
+    });
   });
 
   it('returns unknown when the requested address is absent from a successful provider response', async () => {
@@ -182,6 +266,43 @@ describe('TokenScreeningService', () => {
       code: 1,
       message: 'OK',
       result: { [solanaMint]: providerSignals },
+    });
+
+    it('keeps Solana screening cache entries isolated from EVM and other mints', async () => {
+      const keys: string[] = [];
+      const cache = {
+        getTokenScreeningCache: vi.fn(async (key: string) => {
+          keys.push(key);
+          return null;
+        }),
+        setTokenScreeningCache: vi.fn().mockResolvedValue(undefined),
+      } as unknown as RedisThrottlerStorage;
+      const service = new TokenScreeningService(cache);
+      const providerSignals = {
+        mintable: { status: '0' },
+        freezable: { status: '0' },
+        closable: { status: '0' },
+        balance_mutable_authority: { status: '0' },
+        metadata_mutable: { status: '0' },
+        transfer_fee: { current_fee_rate: { fee_rate: '0' } },
+        transfer_fee_upgradable: { status: '0' },
+        transfer_hook: [],
+        transfer_hook_upgradable: { status: '0' },
+        default_account_state: '1',
+        default_account_state_upgradable: { status: '0' },
+        none_transferable: '0',
+        trusted_token: 1,
+      };
+      stubProvider({ code: 1, result: { [solanaMint]: providerSignals } });
+
+      await service.screenSolanaToken(solanaMint);
+      await service.screenSolanaToken('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+
+      expect(keys).toHaveLength(2);
+      expect(keys[0]).toMatch(/^[a-f0-9]{64}$/);
+      expect(keys[1]).toMatch(/^[a-f0-9]{64}$/);
+      expect(keys[0]).not.toBe(keys[1]);
+      expect(keys[0]).not.toContain(solanaMint);
     });
 
     const response = await new TokenScreeningService().screenSolanaToken(solanaMint);

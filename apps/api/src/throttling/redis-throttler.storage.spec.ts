@@ -105,6 +105,28 @@ describe('RedisThrottlerStorage', () => {
     );
   });
 
+  it('namespaces screening cache entries separately from quote cache entries', async () => {
+    const key = 'b'.repeat(64);
+    const read = createStorage('{"riskLevel":"low"}');
+    await expect(read.storage.getTokenScreeningCache(key))
+      .resolves.toBe('{"riskLevel":"low"}');
+    expect(read.client.eval).toHaveBeenCalledWith(
+      "return redis.call('GET', KEYS[1])",
+      { keys: [`test:throttle:token-screening:{${key}}`], arguments: [] },
+    );
+
+    const write = createStorage('OK');
+    await expect(write.storage.setTokenScreeningCache(key, '{"riskLevel":"low"}', 10_000))
+      .resolves.toBeUndefined();
+    expect(write.client.eval).toHaveBeenCalledWith(
+      "return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])",
+      {
+        keys: [`test:throttle:token-screening:{${key}}`],
+        arguments: ['10000', '{"riskLevel":"low"}'],
+      },
+    );
+  });
+
   it('fails closed on quote cache command errors and invalid Redis responses', async () => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const readFailure = createStorage();
