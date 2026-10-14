@@ -142,6 +142,40 @@ Global request validation rejects unknown DTO fields. Global throttling defaults
 
 `1.0.0-rc.1` is a pre-release candidate, **not** the First Stable Production Release. Do not represent it as production-certified or deploy it without completing the operational controls and resolving or formally accepting the limitations above. Stable `1.0.0` release preparation is a subsequent release step.
 
+## UI previews
+
+These are direct Chromium screenshots of the running web app at 1440 × 1000 and 390 × 844. They show the unauthenticated guest experience with onboarding marked complete in browser storage; no wallet is connected and no live API data is represented. Viewer- and SuperAdmin-only controls are not shown because they require real authorized accounts.
+
+### Onboarding
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop onboarding dialog with progress, wallet-safety guidance, and next-step controls](docs/screenshots/onboarding-desktop.png) | ![Mobile onboarding dialog with responsive layout and touch-sized controls](docs/screenshots/onboarding-mobile.png) |
+
+### Sign-in and dashboard
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop guest dashboard with authentication and wallet entry points](docs/screenshots/dashboard-desktop.png) | ![Mobile guest dashboard with authentication and wallet entry points](docs/screenshots/dashboard-mobile.png) |
+
+### Wallet and portfolio
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop disconnected wallet panel and portfolio empty state](docs/screenshots/wallet-desktop.png) | ![Mobile disconnected wallet panel and portfolio empty state](docs/screenshots/wallet-mobile.png) |
+
+### Cross-chain quote
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop bridge quote form in its sign-in-required guest state](docs/screenshots/bridge-desktop.png) | ![Mobile bridge quote form in its sign-in-required guest state](docs/screenshots/bridge-mobile.png) |
+
+### Token screening
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop token screening form in its sign-in-required guest state](docs/screenshots/screening-desktop.png) | ![Mobile token screening form in its sign-in-required guest state](docs/screenshots/screening-mobile.png) |
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)

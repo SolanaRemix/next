@@ -12,7 +12,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input { font: inherit; }
 button { color: inherit; }
 
-.app-shell { margin: 0 auto; max-width: 1180px; min-height: 100vh; padding: 0 max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left)); }
+.app-shell { margin: 0 auto; max-width: 1180px; min-height: 100vh; padding: env(safe-area-inset-top) max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left)); }
 .app-header { align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; min-height: 76px; }
 .brand { align-items: center; color: #f4f5f6; display: flex; font-size: 0.83rem; font-weight: 800; gap: 9px; letter-spacing: 0.06em; text-decoration: none; }
 .brand > span:last-child { color: var(--brand-orange); }
@@ -202,6 +202,9 @@ button { color: inherit; }
 .message { overflow-wrap: anywhere; }
 .message--error { color: var(--negative-red); }
 .message--success { color: var(--positive-green); }
+.message--error, .message--success { border: 1px solid currentColor; border-radius: 10px; padding: 10px 12px; }
+.message--error { background: rgba(255, 68, 68, 0.08); }
+.message--success { background: rgba(0, 255, 128, 0.06); }
 .message button { background: none; border: 0; color: inherit; cursor: pointer; text-decoration: underline; }
 footer { color: var(--text-muted); font-size: 0.78rem; padding: 30px 0; }
 .onboarding-backdrop { align-items: center; background: rgba(3, 5, 7, 0.82); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: flex; inset: 0; justify-content: center; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); position: fixed; z-index: 10; }
