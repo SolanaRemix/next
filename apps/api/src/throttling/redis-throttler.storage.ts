@@ -51,6 +51,9 @@ end
 return { hits, ttl, 0, 0 }
 `;
 
+const READ_QUOTE_CACHE_SCRIPT = `return redis.call('GET', KEYS[1])`;
+const WRITE_QUOTE_CACHE_SCRIPT = `return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])`;
+
 @Injectable()
 export class RedisThrottlerStorage
   implements ThrottlerStorage, OnModuleInit, OnModuleDestroy, OnApplicationShutdown
@@ -88,6 +91,44 @@ export class RedisThrottlerStorage
       if (Number(result) !== 1) throw new Error('Redis returned an invalid health response.');
     } catch {
       throw new ServiceUnavailableException('Shared request throttling is unavailable.');
+    }
+  }
+
+  async getQuoteCache(key: string): Promise<string | null> {
+    if (!this.client) return null;
+    let result: unknown;
+    try {
+      result = await this.client.eval(READ_QUOTE_CACHE_SCRIPT, {
+        keys: [`${this.namespace}:quotes:{${key}}`],
+        arguments: [],
+      });
+    } catch {
+      this.logger.error('Redis quote-cache read failed.');
+      throw new ServiceUnavailableException('Shared quote caching is temporarily unavailable.');
+    }
+    if (result === null || result === undefined) return null;
+    if (typeof result !== 'string') {
+      this.logger.error('Redis returned an invalid quote-cache value.');
+      throw new ServiceUnavailableException('Shared quote caching is temporarily unavailable.');
+    }
+    return result;
+  }
+
+  async setQuoteCache(key: string, value: string, ttlMs: number): Promise<void> {
+    if (!this.client) return;
+    let result: unknown;
+    try {
+      result = await this.client.eval(WRITE_QUOTE_CACHE_SCRIPT, {
+        keys: [`${this.namespace}:quotes:{${key}}`],
+        arguments: [String(ttlMs), value],
+      });
+    } catch {
+      this.logger.error('Redis quote-cache write failed.');
+      throw new ServiceUnavailableException('Shared quote caching is temporarily unavailable.');
+    }
+    if (result !== 'OK') {
+      this.logger.error('Redis returned an invalid quote-cache write response.');
+      throw new ServiceUnavailableException('Shared quote caching is temporarily unavailable.');
     }
   }
 

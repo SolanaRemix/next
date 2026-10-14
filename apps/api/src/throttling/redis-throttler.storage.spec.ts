@@ -84,6 +84,43 @@ describe('RedisThrottlerStorage', () => {
     });
   });
 
+  it('reads and writes quote cache entries with Redis Cluster-safe hashed keys and a TTL', async () => {
+    const key = 'a'.repeat(64);
+    const read = createStorage('{"routes":[]}');
+    await expect(read.storage.getQuoteCache(key)).resolves.toBe('{"routes":[]}');
+    expect(read.client.eval).toHaveBeenCalledWith(
+      "return redis.call('GET', KEYS[1])",
+      { keys: [`test:throttle:quotes:{${key}}`], arguments: [] },
+    );
+
+    const write = createStorage('OK');
+    await expect(write.storage.setQuoteCache(key, '{"routes":[]}', 3_000))
+      .resolves.toBeUndefined();
+    expect(write.client.eval).toHaveBeenCalledWith(
+      "return redis.call('PSETEX', KEYS[1], ARGV[1], ARGV[2])",
+      {
+        keys: [`test:throttle:quotes:{${key}}`],
+        arguments: ['3000', '{"routes":[]}'],
+      },
+    );
+  });
+
+  it('fails closed on quote cache command errors and invalid Redis responses', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const readFailure = createStorage();
+    readFailure.client.eval.mockRejectedValue(new Error('connection lost'));
+    await expect(readFailure.storage.getQuoteCache('a'.repeat(64)))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    const writeFailure = createStorage('invalid');
+    await expect(writeFailure.storage.setQuoteCache('a'.repeat(64), '{}', 3_000))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    await expect(new RedisThrottlerStorage(null).getQuoteCache('key')).resolves.toBeNull();
+    await expect(new RedisThrottlerStorage(null).setQuoteCache('key', '{}', 3_000))
+      .resolves.toBeUndefined();
+  });
+
   it('fails readiness when configured Redis is disconnected or unavailable', async () => {
     const disconnected = createStorage();
     await expect(disconnected.storage.checkHealth()).rejects.toMatchObject({ status: 503 });

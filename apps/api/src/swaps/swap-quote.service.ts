@@ -1,12 +1,20 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import type {
   EvmQuoteProvider,
   SwapQuoteRequest,
   SwapQuoteResponse,
   SwapRouteQuote,
 } from '@next/types';
+import { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js';
 
 const quoteTimeoutMs = 8_000;
+const quoteCacheTtlMs = 3_000;
 const providerNames: EvmQuoteProvider[] = ['0x', '1inch', 'paraswap'];
 const oneInchChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
 const zeroXChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
@@ -21,8 +29,47 @@ interface QuoteProvider {
   quote(request: SwapQuoteRequest): Promise<ProviderQuoteResult>;
 }
 
+function cacheKey(request: SwapQuoteRequest): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      chainId: request.chainId,
+      sellToken: request.sellToken.toLowerCase(),
+      buyToken: request.buyToken.toLowerCase(),
+      sellAmount: request.sellAmount,
+      sellDecimals: request.sellDecimals,
+      buyDecimals: request.buyDecimals,
+      maxSlippageBps: request.maxSlippageBps,
+    }))
+    .digest('hex');
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isCachedQuote(value: unknown, request: SwapQuoteRequest): value is SwapQuoteResponse {
+  if (!isRecord(value)) return false;
+  return value.chainId === request.chainId &&
+    typeof value.sellToken === 'string' &&
+    value.sellToken.toLowerCase() === request.sellToken.toLowerCase() &&
+    typeof value.buyToken === 'string' &&
+    value.buyToken.toLowerCase() === request.buyToken.toLowerCase() &&
+    value.sellAmount === request.sellAmount &&
+    value.maxSlippageBps === request.maxSlippageBps &&
+    Array.isArray(value.routes) &&
+    value.routes.every((route: unknown) =>
+      isRecord(route) &&
+      typeof route.provider === 'string' &&
+      providerNames.includes(route.provider as EvmQuoteProvider) &&
+      typeof route.buyAmount === 'string' && /^[1-9]\d{0,77}$/.test(route.buyAmount) &&
+      typeof route.minimumBuyAmount === 'string' &&
+      /^(?:0|[1-9]\d{0,77})$/.test(route.minimumBuyAmount) &&
+      (route.estimatedGas === undefined ||
+        (typeof route.estimatedGas === 'string' && /^\d{1,20}$/.test(route.estimatedGas)))) &&
+    Array.isArray(value.unavailableProviders) &&
+    value.unavailableProviders.every((provider: unknown) =>
+      typeof provider === 'string' && providerNames.includes(provider as EvmQuoteProvider)) &&
+    typeof value.quotedAt === 'string' && Number.isFinite(Date.parse(value.quotedAt));
 }
 
 function amountField(value: unknown, field: string): string {
@@ -169,9 +216,25 @@ export class SwapQuoteService {
     new ParaSwapQuoteProvider(),
   ];
 
+  constructor(
+    @Optional() private readonly cache?: RedisThrottlerStorage,
+  ) {}
+
   async quote(request: SwapQuoteRequest): Promise<SwapQuoteResponse> {
     if (request.sellToken.toLowerCase() === request.buyToken.toLowerCase()) {
       throw new BadRequestException('Sell and buy tokens must be different.');
+    }
+    const key = cacheKey(request);
+    const cached = await this.cache?.getQuoteCache(key);
+    if (cached) {
+      try {
+        const parsed: unknown = JSON.parse(cached);
+        if (isCachedQuote(parsed, request)) {
+          return { ...parsed, sellToken: request.sellToken, buyToken: request.buyToken };
+        }
+      } catch {
+        // Treat malformed cached data as a miss and request fresh provider quotes.
+      }
     }
     const outcomes = await Promise.allSettled(
       this.providers.map(async (provider) => ({
@@ -206,7 +269,7 @@ export class SwapQuoteService {
       return leftAmount === rightAmount ? 0 : leftAmount > rightAmount ? -1 : 1;
     });
 
-    return {
+    const quote: SwapQuoteResponse = {
       chainId: request.chainId,
       sellToken: request.sellToken,
       buyToken: request.buyToken,
@@ -216,5 +279,7 @@ export class SwapQuoteService {
       unavailableProviders: providerNames.filter((provider) => !succeeded.has(provider)),
       quotedAt: new Date().toISOString(),
     };
+    await this.cache?.setQuoteCache(key, JSON.stringify(quote), quoteCacheTtlMs);
+    return quote;
   }
 }
