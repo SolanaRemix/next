@@ -66,6 +66,33 @@ describe('SwapQuoteService', () => {
     expect(result.unavailableProviders).toEqual(['0x', '1inch']);
   });
 
+  it('fans out only to enabled providers selected by administrator controls', async () => {
+    const controls = {
+      getEnabledProviders: vi.fn().mockResolvedValue(['paraswap']),
+    };
+    const quoteService = new SwapQuoteService(undefined, controls as never);
+    const fetch = vi.fn(async () => Response.json({ priceRoute: { destAmount: '1100' } }));
+    vi.stubGlobal('fetch', fetch);
+
+    const result = await quoteService.quote(request);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(result.routes.map((route) => route.provider)).toEqual(['paraswap']);
+    expect(result.unavailableProviders).toEqual([]);
+  });
+
+  it('fails closed when administrator controls disable every quote provider', async () => {
+    const controls = {
+      getEnabledProviders: vi.fn().mockResolvedValue([]),
+    };
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const quoteService = new SwapQuoteService(undefined, controls as never);
+
+    await expect(quoteService.quote(request)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('fails closed when no aggregator provides a quote', async () => {
     delete process.env.ONEINCH_API_KEY;
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));

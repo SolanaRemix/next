@@ -13,6 +13,7 @@ import type {
   SwapRouteQuote,
 } from '@next/types';
 import { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js';
+import { AggregatorControlsService } from '../aggregator-controls/aggregator-controls.service.js';
 
 const quoteTimeoutMs = 8_000;
 const quoteCacheTtlMs = 3_000;
@@ -34,7 +35,7 @@ interface QuoteProvider {
   quote(request: SwapQuoteRequest): Promise<ProviderQuoteResult>;
 }
 
-function cacheKey(request: SwapQuoteRequest): string {
+function cacheKey(request: SwapQuoteRequest, enabledProviders: readonly EvmQuoteProvider[]): string {
   return createHash('sha256')
     .update(JSON.stringify({
       chainId: request.chainId,
@@ -44,6 +45,7 @@ function cacheKey(request: SwapQuoteRequest): string {
       sellDecimals: request.sellDecimals,
       buyDecimals: request.buyDecimals,
       maxSlippageBps: request.maxSlippageBps,
+      enabledProviders,
     }))
     .digest('hex');
 }
@@ -52,7 +54,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isCachedQuote(value: unknown, request: SwapQuoteRequest): value is SwapQuoteResponse {
+function isCachedQuote(
+  value: unknown,
+  request: SwapQuoteRequest,
+  enabledProviders: readonly EvmQuoteProvider[],
+): value is SwapQuoteResponse {
   if (!isRecord(value)) return false;
   return value.chainId === request.chainId &&
     typeof value.sellToken === 'string' &&
@@ -67,7 +73,7 @@ function isCachedQuote(value: unknown, request: SwapQuoteRequest): value is Swap
     value.routes.every((route: unknown) =>
       isRecord(route) &&
       typeof route.provider === 'string' &&
-      providerNames.includes(route.provider as EvmQuoteProvider) &&
+      enabledProviders.includes(route.provider as EvmQuoteProvider) &&
       typeof route.buyAmount === 'string' && /^[1-9]\d{0,77}$/.test(route.buyAmount) &&
       typeof route.minimumBuyAmount === 'string' &&
       /^(?:0|[1-9]\d{0,77})$/.test(route.minimumBuyAmount) &&
@@ -75,7 +81,7 @@ function isCachedQuote(value: unknown, request: SwapQuoteRequest): value is Swap
         (typeof route.estimatedGas === 'string' && /^\d{1,20}$/.test(route.estimatedGas)))) &&
     Array.isArray(value.unavailableProviders) &&
     value.unavailableProviders.every((provider: unknown) =>
-      typeof provider === 'string' && providerNames.includes(provider as EvmQuoteProvider)) &&
+      typeof provider === 'string' && enabledProviders.includes(provider as EvmQuoteProvider)) &&
     typeof value.quotedAt === 'string' && Number.isFinite(Date.parse(value.quotedAt));
 }
 
@@ -225,6 +231,7 @@ export class SwapQuoteService {
 
   constructor(
     @Optional() private readonly cache?: RedisThrottlerStorage,
+    @Optional() private readonly controls?: AggregatorControlsService,
   ) {}
 
   private async quoteFromProvider(
@@ -278,12 +285,18 @@ export class SwapQuoteService {
     if (request.sellToken.toLowerCase() === request.buyToken.toLowerCase()) {
       throw new BadRequestException('Sell and buy tokens must be different.');
     }
-    const key = cacheKey(request);
+    const enabledProviders = this.controls
+      ? await this.controls.getEnabledProviders()
+      : providerNames;
+    if (enabledProviders.length === 0) {
+      throw new ServiceUnavailableException('All EVM quote providers are disabled by administrator control.');
+    }
+    const key = cacheKey(request, enabledProviders);
     const cached = await this.cache?.getQuoteCache(key);
     if (cached) {
       try {
         const parsed: unknown = JSON.parse(cached);
-        if (isCachedQuote(parsed, request)) {
+        if (isCachedQuote(parsed, request, enabledProviders)) {
           return { ...parsed, sellToken: request.sellToken, buyToken: request.buyToken };
         }
       } catch {
@@ -291,7 +304,9 @@ export class SwapQuoteService {
       }
     }
     const outcomes = await Promise.allSettled(
-      this.providers.map((provider) => this.quoteFromProvider(provider, request)),
+      this.providers
+        .filter((provider) => enabledProviders.includes(provider.name))
+        .map((provider) => this.quoteFromProvider(provider, request)),
     );
     const routes: SwapRouteQuote[] = [];
     const succeeded = new Set<EvmQuoteProvider>();
@@ -327,7 +342,7 @@ export class SwapQuoteService {
       sellAmount: request.sellAmount,
       maxSlippageBps: request.maxSlippageBps,
       routes,
-      unavailableProviders: providerNames.filter((provider) => !succeeded.has(provider)),
+      unavailableProviders: enabledProviders.filter((provider) => !succeeded.has(provider)),
       quotedAt: new Date().toISOString(),
     };
     await this.cache?.setQuoteCache(key, JSON.stringify(quote), quoteCacheTtlMs);

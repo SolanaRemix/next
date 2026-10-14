@@ -8,9 +8,10 @@ import { FinancialControlsModule } from '../financial-controls/financial-control
 import { EvmSwapController } from './evm-swap.controller.js';
 import { EvmSwapExecutionService } from './evm-swap-execution.service.js';
 import { RedisThrottlerModule } from '../throttling/redis-throttler.module.js';
+import { AggregatorControlsModule } from '../aggregator-controls/aggregator-controls.module.js';
 
 @Module({
-  imports: [AuditModule, FinancialControlsModule, RedisThrottlerModule],
+  imports: [AuditModule, FinancialControlsModule, RedisThrottlerModule, AggregatorControlsModule],
   controllers: [SwapsController, SolanaSwapController, EvmSwapController],
   providers: [SwapQuoteService, SolanaSwapExecutionService, EvmSwapExecutionService],
 })

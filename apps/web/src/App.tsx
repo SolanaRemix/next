@@ -35,6 +35,11 @@ const FinancialControlsPanel = lazy(() =>
     default: module.FinancialControlsPanel,
   })),
 );
+const AggregatorControlsPanel = lazy(() =>
+  import("./admin/AggregatorControlsPanel").then((module) => ({
+    default: module.AggregatorControlsPanel,
+  })),
+);
 const UserManagementPanel = lazy(() =>
   import("./admin/UserManagementPanel").then((module) => ({
     default: module.UserManagementPanel,
@@ -81,6 +86,9 @@ export function App() {
         <>
           <Suspense fallback={<GlassCard className="feature-loading">Loading administrator controls…</GlassCard>}>
             <FinancialControlsPanel accessToken={accessToken} />
+          </Suspense>
+          <Suspense fallback={<GlassCard className="feature-loading">Loading provider controls…</GlassCard>}>
+            <AggregatorControlsPanel accessToken={accessToken} />
           </Suspense>
           <Suspense fallback={<GlassCard className="feature-loading">Loading user management…</GlassCard>}>
             <UserManagementPanel accessToken={accessToken} />
