@@ -24,6 +24,8 @@ function providerResponse() {
     action: {
       fromChainId: request.fromChainId,
       toChainId: request.toChainId,
+      fromAddress: evmWallet,
+      toAddress: solanaWallet,
       fromToken: { address: evmToken, symbol: 'ETH' },
       toToken: { address: solanaToken, symbol: 'SOL' },
       fromAmount: request.fromAmount,
@@ -116,6 +118,8 @@ describe('BridgeQuoteService', () => {
       action: {
         fromChainId: request.fromChainId,
         toChainId: request.toChainId,
+        fromAddress: evmWallet,
+        toAddress: solanaWallet,
         fromToken: { address: evmToken, symbol: 'ETH' },
         toToken: { address: solanaToken, symbol: 'SOL' },
         fromAmount: '1',

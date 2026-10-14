@@ -55,8 +55,8 @@ export function BridgeQuotePanel({
     try {
       if (!accessToken) throw new Error("Sign in to access cross-chain quotes.");
       const slippagePercent = Number(values.slippagePercent);
-      if (!Number.isFinite(slippagePercent) || slippagePercent <= 0 || slippagePercent > 50) {
-        throw new Error("Maximum slippage must be greater than 0% and no more than 50%.");
+      if (!Number.isFinite(slippagePercent) || slippagePercent <= 0 || slippagePercent > 5) {
+        throw new Error("Maximum slippage must be greater than 0% and no more than 5%.");
       }
       const request: CrossChainBridgeQuoteRequest = {
         fromChainId: Number(values.fromChainId),
@@ -121,7 +121,7 @@ export function BridgeQuotePanel({
           <input disabled={busy} required spellCheck={false} autoComplete="off" value={values.toAddress} onChange={(event) => update("toAddress", event.target.value)} />
         </label>
         <label>Maximum slippage (%)
-          <input disabled={busy} required min="0.01" max="50" step="0.01" type="number" value={values.slippagePercent} onChange={(event) => update("slippagePercent", event.target.value)} />
+          <input disabled={busy} required min="0.01" max="5" step="0.01" type="number" value={values.slippagePercent} onChange={(event) => update("slippagePercent", event.target.value)} />
         </label>
         <FlashButton type="submit" disabled={busy || !accessToken}>
           {busy ? "Fetching bridge quote…" : accessToken ? "Request bridge quote" : authenticated ? "Viewer role required" : "Sign in to request a quote"}

@@ -10,6 +10,7 @@ const validConfig = {
 const productionRpcConfig = {
   NODE_ENV: 'production',
   REDIS_URL: 'rediss://redis.example.com:6380',
+  LIFI_API_KEY: 'valid-production-test-key',
   RPC_PRIVATE_HOSTS: 'solana.private.example,evm.private.example',
   SOLANA_RPC_URL: 'https://solana.private.example/rpc',
   ...Object.fromEntries(
@@ -105,6 +106,23 @@ describe('validateEnvironment', () => {
       ...validConfig,
       ...productionRpcConfig,
     })).toMatchObject({ REDIS_URL: 'rediss://redis.example.com:6380' });
+  });
+
+  it('requires a well-formed LI.FI key in production', () => {
+    expect(() => validateEnvironment({
+      ...validConfig,
+      ...productionRpcConfig,
+      NODE_ENV: 'production',
+      LIFI_API_KEY: undefined,
+    })).toThrow(/LIFI_API_KEY is required/);
+    expect(() => validateEnvironment({
+      ...validConfig,
+      LIFI_API_KEY: 'invalid key',
+    })).toThrow(/printable non-space ASCII/);
+    expect(validateEnvironment({
+      ...validConfig,
+      LIFI_API_KEY: 'valid-development-key',
+    })).toMatchObject({ LIFI_API_KEY: 'valid-development-key' });
   });
 
   it('requires valid countries and trusted proxy CIDRs for geographic restrictions', () => {

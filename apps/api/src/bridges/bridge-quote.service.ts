@@ -92,6 +92,8 @@ function validateQuote(
   const estimate = data.estimate;
   if (action.fromChainId !== request.fromChainId ||
       action.toChainId !== request.toChainId ||
+      !matchesRequestedAddress(action.fromAddress, request.fromAddress, request.fromChainId) ||
+      !matchesRequestedAddress(action.toAddress, request.toAddress, request.toChainId) ||
       !matchesRequestedAddress(action.fromToken && isRecord(action.fromToken)
         ? action.fromToken.address : undefined, request.fromToken, request.fromChainId) ||
       !matchesRequestedAddress(action.toToken && isRecord(action.toToken)
@@ -153,11 +155,15 @@ export class BridgeQuoteService {
     if (request.fromChainId === request.toChainId) {
       throw new BadRequestException('Bridge quotes require different source and destination chains.');
     }
-    if (!isAddressForChain(request.fromToken, request.fromChainId) ||
+    if (!integerPattern.test(request.fromAmount) ||
+        !Number.isInteger(request.slippageBps) ||
+        request.slippageBps < 1 ||
+        request.slippageBps > 500 ||
+        !isAddressForChain(request.fromToken, request.fromChainId) ||
         !isAddressForChain(request.toToken, request.toChainId) ||
         !isAddressForChain(request.fromAddress, request.fromChainId) ||
         !isAddressForChain(request.toAddress, request.toChainId)) {
-      throw new BadRequestException('Token and wallet addresses must match their selected chains.');
+      throw new BadRequestException('Quote amount, slippage, token, or wallet details are invalid.');
     }
 
     const quote = await trace.getTracer('mega-gods-prompt-next-api').startActiveSpan(

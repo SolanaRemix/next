@@ -143,6 +143,14 @@ export function validateEnvironment(config: Record<string, unknown>): Record<str
     }
   }
   const production = config.NODE_ENV === 'production';
+  const lifiApiKey = config.LIFI_API_KEY;
+  if (production && (typeof lifiApiKey !== 'string' || lifiApiKey.length === 0)) {
+    throw new Error('LIFI_API_KEY is required in production.');
+  }
+  if (lifiApiKey !== undefined && lifiApiKey !== '' &&
+      (typeof lifiApiKey !== 'string' || !/^[\x21-\x7E]{1,512}$/.test(lifiApiKey))) {
+    throw new Error('LIFI_API_KEY must be 1-512 printable non-space ASCII characters.');
+  }
   const privateRpcHosts = production ? parsePrivateRpcHosts(config.RPC_PRIVATE_HOSTS) : null;
   const blockedCountries = config.GEO_BLOCKED_COUNTRIES;
   const trustedProxyCidrs = config.GEO_TRUSTED_PROXY_CIDRS;
