@@ -200,7 +200,7 @@ describe('SwapQuoteService', () => {
       _options: SpanOptions,
       callback: (span: Span) => Promise<unknown>,
     ) => {
-      const record = { attributes: {}, statusCodes: [] as number[], ended: false };
+      const record = { attributes: {} as Record<string, unknown>, statusCodes: [] as number[], ended: false };
       spanRecords.push(record);
       const span = {
         setAttribute: vi.fn((key: string, value: unknown) => {
