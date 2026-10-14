@@ -1,105 +1,185 @@
 # Mega Gods Prompt NEXT
 
-An early monorepo foundation for the requested multi-chain wallet and onboarding experience.
+**Repository:** [SolanaRemix/next](https://github.com/SolanaRemix/next)  
+**Version:** `1.0.0-rc.1`  
+**License:** Apache-2.0
 
-## Workspace
+Mega Gods Prompt NEXT is a self-custody, multi-chain wallet dashboard with account roles, read-only portfolio and risk tools, wallet-approved transfers and swaps, and audited operator controls. This repository is a **release candidate**, not the First Stable Production Release. The production-readiness gaps and deployment constraints are listed below and in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
-- `apps/web` — React, TypeScript, and Vite frontend
-- `apps/api` — NestJS API with PostgreSQL-backed JWT authentication, RBAC, rate limiting, risk checks, and aggregator quotes
-- `packages/types` — shared wallet, onboarding, auth roles, perpetual risk, and swap quote types
-- `packages/ui` — glassmorphism cards, flash buttons, badges, and theme styles
-- `packages/config` — shared theme tokens
+## Architecture
 
-Perpetual and swap panels are lazy-loaded. The Solana Web3 provider is loaded only when a Solana wallet operation is requested, keeping Solana dependencies out of the initial JavaScript bundle.
-
-## Phase 0: hardening and operations
-
-Phase 0 adds a GitHub Actions pipeline that runs typecheck, tests, builds, and `npm audit` for pull requests and pushes to `main`. The API production build uses `apps/api/tsconfig.build.json`, which excludes test files. The health endpoints are exempt from geographic access checks, bootstrap-admin uses serializable isolation, and financial-control changes now use serializable transactions with their audit records.
-
-Production API startup requires PostgreSQL, a 32-byte JWT access secret, Redis database 0, a private Solana RPC, and private RPC endpoints for every supported EVM chain. Set `RPC_PRIVATE_HOSTS` to the comma-separated exact hostnames of those private RPC endpoints. Every configured RPC hostname must be in that allowlist; recognized public RPC hosts are rejected even if listed. Public endpoint detection is necessarily finite, so only use provider endpoints contractually configured for private access. Development can continue to use public RPC endpoints.
-
-The Docker Compose stack builds the web and API images and starts PostgreSQL and a password-protected, single-node Redis Cluster with persistent volumes and healthchecks. The API applies Prisma migrations before serving traffic; readiness waits for both PostgreSQL and Redis. Copy `.env.example` to `.env`, set unique URL-safe passwords and private RPC values, and start the stack with:
-
-```sh
-docker compose up --build
+```mermaid
+flowchart LR
+  Browser["React + Vite web app"] -->|HTTPS / JSON, JWT + refresh cookie| API["NestJS API"]
+  Browser -->|wallet connection, reads, local signing| Wallet["Injected EVM / Solana wallet"]
+  API --> DB[("PostgreSQL / Prisma")]
+  API --> Redis[("Redis / shared throttling, cache, circuits")]
+  API --> RPC["Configured Solana and EVM RPCs"]
+  API --> Providers["LI.FI · 0x · 1inch · ParaSwap · Jupiter · CoinGecko · GoPlus"]
+  API --> Telemetry["Optional OTLP / Sentry"]
+  Wallet --> Chains["Solana mainnet and supported EVM networks"]
 ```
 
-The web app is available at `http://localhost:8080`. Compose requires all seven supported EVM RPC URLs even if a deployment does not expose every chain. The compose file is a single-host deployment baseline; its Redis Cluster has no replica or failover and is not a substitute for managed PostgreSQL/TimescaleDB and a highly available Redis Cluster, backups, TLS termination, secret management, network policy, or multi-replica orchestration.
+`apps/web` is the browser application, `apps/api` is the HTTP API and persistence layer, and `packages/types`, `packages/ui`, and `packages/config` provide shared types, React components, and theme tokens. Wallets retain private keys; the API stores accounts and refresh-token hashes, not wallet secrets. API responses, cookies, and wallet transactions follow the specific flows described in [`docs/SECURITY.md`](docs/SECURITY.md).
 
-## Phase 1: core wallet and portfolio (in progress)
+## Feature access by role
 
-Authenticated users can change their password after verifying the current password; this updates the Argon2 hash, increments the account authentication version, immediately invalidates previously issued access tokens, returns a replacement token for the current device, revokes other refresh sessions, and audits without recording password values. Users can also review their 50 most recent refresh sessions, revoke individual active sessions, or revoke all other active sessions. Revocation is scoped to the authenticated user and audited. Revoking a refresh session prevents future refreshes, but access tokens already issued to that device may remain valid for up to 15 minutes unless the account is restricted or its password is changed.
+Roles are hierarchical: `Guest < Viewer < Trader < EnterpriseAdmin < SuperAdmin`. A higher role inherits routes guarded by lower roles. An account receives `Guest` on registration; privileged roles are assigned manually by a SuperAdmin or through the one-time bootstrap command.
 
-The connected wallet portfolio reads native and non-zero SPL/Token-2022 balances from Solana RPC and native balances plus manually tracked ERC-20 balances from the active EVM wallet network. ERC-20 token addresses are stored only in account/network-scoped browser local storage; the interface verifies token metadata and balances through read-only `eth_call`, checks for account/network changes, and never submits token transactions. EVM token discovery is manual. Authenticated Viewer-or-higher sessions can request indicative native and tracked-token USD prices for supported EVM networks and Solana mainnet through the API's CoinGecko integration; configure `COINGECKO_API_KEY` in `apps/api/.env` to enable it. Solana pricing covers the native SOL asset and the wallet's non-zero token mints, with a maximum of 50 token prices per request. The total is omitted if a balance or price is unavailable, and the UI shows when the price request was retrieved. These are reference estimates, not executable quotes or guaranteed valuations. ERC-20 allowance management stores tracked token/spender pairs in account/network-scoped browser local storage, reads allowances using `eth_call`, and submits revocations only through the connected wallet after simulation and gas estimation; the UI verifies transaction confirmation and a zero allowance afterward. Forgetting a tracked pair only removes its local entry and does not change on-chain permissions. Automatic approval discovery scans only Approval events for manually tracked ERC-20 contracts over a recent 5,000-block window using the server's configured EVM RPC, then verifies current allowance values. It is Viewer-protected and limited to 2 requests per minute. History before that window, nonstandard token events, unsupported RPC log scans, and tokens not manually tracked may be absent; the result explicitly reports incomplete history. Discovery never revokes or submits transactions and is not a substitute for independently reviewing spender permissions. Native transfers now require a read-only preflight before review: EVM transfers use `eth_call`, gas estimation, gas price, and balance checks; Solana transfers use `simulateTransaction`, fee estimation, and balance checks. The preflight is repeated immediately before requesting wallet submission, but network state and estimated fees can still change; always verify the wallet's final transaction details.
+| Capability | Guest | Viewer | Trader | SuperAdmin |
+| --- | --- | --- | --- | --- |
+| Sign up, authenticate, manage own password and sessions | Yes | Yes | Yes | Yes |
+| Connect wallets; view wallet-read balances, track local token/allowance lists, and use wallet-approved native transfers | Yes | Yes | Yes | Yes |
+| Indicative swap and bridge quotes; token screening, market search, portfolio prices and cross-chain watchlist | — | Yes | Yes | Yes |
+| Simulated perpetual risk checks; EVM and Solana swap order, wallet signing, submission, and status flows | — | — | Yes | Yes |
+| User roles/account status, audit log, global financial execution control, and EVM quote-provider selection | — | — | — | Yes |
 
-Cross-chain portfolio aggregation is available as a read-only, Viewer-protected portfolio watchlist. It supports up to 8 locally saved public wallet addresses across the 7 configured EVM networks and Solana mainnet; EVM ERC-20 contracts remain manually selected, while Solana token balances are discovered from the configured RPC. The API uses only server-configured RPC endpoints, does not persist submitted addresses, and limits aggregation requests to 5 per minute. CoinGecko prices remain indicative and optional; missing balances or prices keep the combined total unavailable. This module never signs or broadcasts transactions.
+“Wallet-approved” means the connected wallet displays and authorizes a transaction. It does not mean that a transaction is guaranteed to succeed or that this application provides investment advice. `EnterpriseAdmin` is an intermediate role in the hierarchy; current administrative endpoints specifically require `SuperAdmin`. There are no separate database- or environment-backed Enterprise feature flags in this release candidate.
+
+## Networks and integrations
+
+| Network | Chain identifier | Wallet / RPC use | Current provider-backed features |
+| --- | --- | --- | --- |
+| Ethereum | EVM `1` | Injected EVM wallet; API `EVM_RPC_URL_1` | 0x, 1inch and ParaSwap quotes; 0x swaps; LI.FI quotes; CoinGecko prices; GoPlus screening |
+| Optimism | EVM `10` | Injected EVM wallet; API `EVM_RPC_URL_10` | Same EVM feature set |
+| BNB Chain | EVM `56` | Injected EVM wallet; API `EVM_RPC_URL_56` | Same EVM feature set |
+| Polygon | EVM `137` | Injected EVM wallet; API `EVM_RPC_URL_137` | Same EVM feature set |
+| Base | EVM `8453` | Injected EVM wallet; API `EVM_RPC_URL_8453` | Same EVM feature set |
+| Arbitrum | EVM `42161` | Injected EVM wallet; API `EVM_RPC_URL_42161` | Same EVM feature set |
+| Avalanche | EVM `43114` | Injected EVM wallet; API `EVM_RPC_URL_43114` | Same EVM feature set |
+| Solana mainnet | `mainnet-beta` (LI.FI chain ID `1151111081099710`) | Phantom/Solflare-compatible wallet; API `SOLANA_RPC_URL`; browser `VITE_SOLANA_RPC_URL` | Jupiter swaps and market data, LI.FI quotes, GoPlus beta screening, CoinGecko prices |
+
+Providers and asset/network support are subject to each provider's availability, credentials, terms, and coverage. Swap quotes from 0x, 1inch, and ParaSwap are indicative; EVM swap execution is 0x-only. The bridge integration returns sanitized LI.FI quotes only and does not build or execute a bridge transaction. Solana token market information combines Jupiter and DEX Screener data; observations and venue spreads are not executable prices or slippage estimates.
+
+## Environment variable matrix
+
+Set server variables in `apps/api/.env` for local development or in the deployment's secret/configuration manager. Only `VITE_*` values are bundled into the browser; never place server credentials in them. Values labeled “required in production” are checked during API startup unless otherwise noted.
+
+| Variable | Scope | Development | Production / purpose |
+| --- | --- | --- | --- |
+| `NODE_ENV` | API | Usually `development` | Set `production` to activate strict production checks and secure refresh cookies. |
+| `PORT` | API | Optional; defaults to `3001` | Optional; listening port, integer `1`–`65535`. |
+| `WEB_ORIGIN` | API | Optional; defaults to `http://localhost:5173` | Set the exact browser origin, without a path; used for CORS. |
+| `DATABASE_URL` | API | Required PostgreSQL URL | Required PostgreSQL URL for account, control, execution, and audit records. |
+| `JWT_ACCESS_SECRET` | API | Required; at least 32 bytes | Required; use a secret value with at least 32 bytes. |
+| `REDIS_URL` | API | Optional; absent means in-memory throttling | Required; Redis/Redis Cluster URL using database 0. `rediss://` enables TLS. |
+| `RPC_PRIVATE_HOSTS` | API | Optional | Required comma-separated exact hostnames for private RPC endpoints. Production startup rejects configured RPC hosts outside this list and a finite set of known public hosts. |
+| `SOLANA_RPC_URL` | API | Optional; components may use the public Solana mainnet default | Required HTTPS endpoint in production and its hostname must be in `RPC_PRIVATE_HOSTS`. |
+| `EVM_RPC_URL_1`, `_10`, `_56`, `_137`, `_8453`, `_42161`, `_43114` | API | Optional; configure networks used by server-side RPC features | All seven are required HTTPS endpoints in production, and each hostname must be allowlisted. |
+| `LIFI_API_KEY` | API | Optional | Required in production; server-side credential for LI.FI bridge quotes. |
+| `JUPITER_API_KEY` | API | Optional | Optional at startup; required for the Trader Solana swap flow. Used server-side. |
+| `ZEROX_API_KEY` | API | Optional | Optional at startup; needed for 0x quotes and EVM swap execution. Used server-side. |
+| `ONEINCH_API_KEY` | API | Optional | Enables authenticated 1inch quote requests; other quote sources are independent. |
+| `ONEINCH_API_BASE_URL` | API | Optional; defaults to `https://api.1inch.dev/swap/v6.0` | Optional 1inch API base URL override. |
+| `COINGECKO_API_KEY` | API | Optional | Optional at startup; required for API portfolio price requests to return provider data. |
+| `EVM_CONFIRMATIONS_1`, `_10`, `_56`, `_137`, `_8453`, `_42161`, `_43114` | API | Optional; code defaults apply | Optional settlement-depth overrides, integers from 2 to 1000; defaults are listed in `apps/api/.env.example`. |
+| `GEO_BLOCKED_COUNTRIES` | API | Optional | Optional comma-separated uppercase ISO country codes. When nonempty, configure trusted proxy CIDRs as well. |
+| `GEO_TRUSTED_PROXY_CIDRS` | API | Optional | Optional CIDR list; required with country blocks. Only an immediate peer in these ranges may supply `CF-IPCountry`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | API | Optional; disabled if absent | Optional HTTP(S) OTLP endpoint without credentials, query, or fragment. Exports inbound HTTP traces. |
+| `OTEL_SERVICE_NAME` | API | Optional; defaults to `mega-gods-prompt-next-api` | Optional tracing service name. |
+| `SENTRY_DSN` | API | Optional | Optional error reporting DSN; production requires HTTPS. |
+| `VITE_API_URL` | Web build | Optional; defaults to `http://localhost:3001/api` | Optional API base URL compiled into the web bundle. Docker Compose builds with `/api`. |
+| `VITE_SOLANA_RPC_URL` | Web build | Optional; defaults to Solana mainnet public RPC | Optional browser-side Solana wallet/read RPC URL. This is separate from the API RPC allowlist. |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Docker Compose | Required by Compose | Required Compose database initialization settings; use unique credentials and a URL-safe password because Compose embeds it in `DATABASE_URL`. |
+| `REDIS_PASSWORD` | Docker Compose | Required by Compose | Required Compose Redis password; use a URL-safe random value because Compose embeds it in the API's Redis URL. |
+| `BOOTSTRAP_ADMIN_EMAIL` | One-time API script | Required only when running bootstrap | Email of an already registered account to promote to the first SuperAdmin; do not expose as an API variable or public endpoint. |
+
+See [`.env.example`](.env.example) and [`apps/api/.env.example`](apps/api/.env.example) for the checked-in variable lists and sample values. Do not commit populated environment files.
 
 ## Local development
 
-Requires Node.js 22 or later and npm.
+Requires Node.js 22 or later, npm, and a PostgreSQL database. Redis is optional in development.
 
 ```sh
-npm install
+npm ci
 npm run db:generate --workspace @next/api
 npm run db:migrate --workspace @next/api
 npm run dev
 ```
 
-In a second terminal, start the API:
+In a second terminal, run `npm run dev:api`. Copy `.env.example` to `.env` and `apps/api/.env.example` to `apps/api/.env`; set `DATABASE_URL` and a random `JWT_ACCESS_SECRET` of at least 32 bytes. Set `REDIS_URL` if local testing should use shared Redis counters/cache. The frontend dev server uses Vite; the API defaults to port `3001` and allows `http://localhost:5173` unless `WEB_ORIGIN` is set.
+
+To bootstrap the first SuperAdmin, first register the account, then run:
 
 ```sh
-npm run dev:api
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com npm run bootstrap:admin --workspace @next/api
 ```
 
-Copy `.env.example` to the repository root for the frontend, and `apps/api/.env.example` to `apps/api/.env`. Set the API `DATABASE_URL` and create a random `JWT_ACCESS_SECRET` with at least 32 bytes (for example, `openssl rand -base64 48`). Configure `REDIS_URL` for API throttling; local development can omit it and uses in-memory throttling, while production refuses to start without Redis and uses the Redis Cluster client seeded by this URL. Use a `rediss://` URL for TLS; ensure cluster-advertised node addresses are reachable from API pods. Do not commit either `.env`. Migrations require a running PostgreSQL database. The API listens on port `3001` by default. Set `PORT` to change it and `WEB_ORIGIN` to configure the single allowed browser origin.
+The command refuses to promote a second SuperAdmin and writes an audit event. See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for operations and deployment guidance.
 
-Optional geographic restrictions use `GEO_BLOCKED_COUNTRIES=US,GB` and `GEO_TRUSTED_PROXY_CIDRS` with the exact edge-proxy CIDRs allowed to supply Cloudflare's `CF-IPCountry` header. With restrictions enabled, requests from other peers or with missing/unknown country data are denied. The API must not be reachable around that trusted edge; configure firewall/origin rules accordingly. Country-level blocks are an access-control signal, not legal advice or a substitute for jurisdiction-specific compliance.
+## Docker Compose
 
-Newly registered users receive only the `Guest` role. To bootstrap the first administrator, create the account through the UI, then run `BOOTSTRAP_ADMIN_EMAIL=admin@example.com npm run bootstrap:admin --workspace @next/api` once. The script refuses to run after a SuperAdmin exists and audits the promotion. Never expose database credentials or this operation to a public endpoint.
-
-After bootstrap, authenticated SuperAdmins can list accounts with `GET /api/auth/users?limit=50`, assign roles with `PATCH /api/auth/users/:id/role`, and set an account's `Active` or `Restricted` status with `PATCH /api/auth/users/:id/status`. Status changes require one of the fixed reason codes (`account_compromise`, `policy_review`, `legal_request`, `other`), are audited, revoke refresh sessions on restriction, and block existing JWT access on the next request. Self-restriction and restriction or demotion of the last active SuperAdmin are rejected. This is a manual account-control mechanism, not an integrated KYC, AML, sanctions-screening, or geographic-compliance service.
-
-Financial swap execution has a database-backed, global kill switch that is created disabled by migration. Only an active SuperAdmin can inspect it with `GET /api/admin/financial-controls/execution` or change it with `PATCH /api/admin/financial-controls/execution` and a JSON body such as `{"enabled":false,"reason":"incident response"}`. Every change and reason is stored in the audit log in the same database transaction, with concurrent changes serialized for accurate audit history. Keep execution disabled until production checks are complete; disabling blocks new order admissions but cannot cancel transactions already presented to a wallet, already in flight, or forwarded to an aggregator or chain. If the control row is unavailable, execution fails closed.
-
-Configure `ZEROX_API_KEY` and `ONEINCH_API_KEY` on the API server for those providers; ParaSwap quoting is attempted without an API key. These secrets are never sent to the browser. Each provider is queried independently, so successful routes are returned when another provider is unavailable. With Redis configured, each aggregator circuit opens after five consecutive failures within 30 seconds and skips that provider for 15 seconds while other routes remain available. After cooldown, a short Redis lease admits only one half-open probe across API replicas; a failed probe reopens the circuit and success clears its recovery state. Exact-input quote results are shared through Redis for at most three seconds; the response remains indicative and should be refreshed before any wallet action. Configure a trusted HTTPS `EVM_RPC_URL_<chainId>` endpoint for each chain on which settlement receipt verification is enabled (for example `EVM_RPC_URL_1`); do not use public RPCs for production settlement.
-
-The authenticated Solana token market searches Jupiter Token API v2 and Jupiter Price API v3, with DEX Screener market pairs used to show Solana venue liquidity, observed prices, and venue spread (including indexed Raydium/Orca pools when present). The panel refreshes on a 30-second interval. This is public market-data aggregation only: provider/indexer coverage varies, prices are indicative, and spread is not an execution slippage or MEV estimate.
-
-Authenticated Viewer-or-higher users can request EVM token contract indicators from `GET /api/token-screening/evm?chainId=1&tokenAddress=0x...` for chain IDs 1, 10, 56, 137, 8453, 42161, and 43114, or Solana mainnet token indicators from `GET /api/token-screening/solana?mint=...`. Both endpoints are limited to 10 requests per minute per client and use GoPlus Security API. Successful provider summaries are shared in Redis for at most 10 seconds using hashed, chain/network-specific identifiers; cache entries are validated before reuse, and Redis cache outages fall back to the provider. With Redis configured, GoPlus circuits are isolated by EVM chain and Solana mainnet: five consecutive failures within 30 seconds open the circuit for 15 seconds, after which one API replica receives a half-open probe lease. Cache hits remain available during provider outages. GoPlus labels the Solana endpoint beta; Solana and EVM use different provider checks and their scores are not directly comparable. The provider's published free quota may also constrain aggregate traffic. Responses are deterministic provider-indicator summaries, not AI analysis, verified safety verdicts, or financial advice. Missing/incomplete signals produce `unknown`, and provider failures return service unavailable.
-
-The Trader-only EVM swap execution path creates persisted, user-idempotent 0x AllowanceHolder orders. The browser checks the connected account and chain, requests only the exact sell-token allowance when needed, estimates gas, and asks the wallet to approve and submit the quote transaction. The API never holds keys or broadcasts on the user's behalf. Set `ZEROX_API_KEY` and a reliable per-chain `EVM_RPC_URL_<chainId>`; the settlement endpoint verifies the submitted transaction matches the persisted order, checks its receipt against the canonical block, and requires a chain-specific confirmation depth before recording a terminal result. Defaults are in `apps/api/.env.example`; operators can override `EVM_CONFIRMATIONS_<chainId>` (2–1000) after risk review. A later observed reorg reopens the order and adds an audit event, but confirmation depth is probabilistic and not a guarantee of irreversible finality. The global execution switch gates new orders, not transactions already given to a wallet. Wallet and chain RPCs can disagree or fail; inspect wallet confirmations and an independent block explorer before treating a pending result as final.
-
-SuperAdmins can enable or disable the existing 0x, 1inch, and ParaSwap indicative quote sources in the audited provider-controls panel. The database-backed selection affects only quote fan-out; the EVM execution order remains 0x-only and is controlled separately by the global execution kill switch. The API fails closed when no quote sources are enabled or provider controls cannot be read. This control is not a perpetual venue/clearinghouse selector and does not add integrations beyond these three existing quote providers.
-
-The Trader-only Solana swap panel uses Jupiter Swap API V2 `/order` and `/execute`. Set `JUPITER_API_KEY` on the API server; never expose it in the browser. The order path delegates dynamic slippage and landing-fee optimization to Jupiter, and the wallet signs the returned versioned transaction locally. Orders are persisted with user-scoped idempotency and a short expiry; the signed transaction is forwarded for execution but is not stored. Audit events record order and execution outcomes. The status endpoint reconciles interrupted submissions against Solana RPC; set `SOLANA_RPC_URL` to a reliable HTTPS RPC endpoint (defaults to the public mainnet endpoint). Jupiter's managed landing provides MEV mitigation, not a guarantee against MEV or failed transactions. The app does not choose a fixed Jito tip; Jupiter controls provider-side priority/landing fees, whose estimate is returned when available.
-
-Viewer users can request exact-input cross-chain route quotes from LI.FI at `POST /api/bridges/quote` across the supported EVM networks and Solana. The API requires explicit source and destination wallet addresses, validates chain-specific address formats and provider response identity, caps requested slippage at 5%, applies a five-request-per-minute endpoint limit and shared provider circuit, and audits quote outcomes without recording wallet addresses or token amounts. `LIFI_API_KEY` is required in production and must be configured on the API server; never expose it in the browser. LI.FI's quote response can include unsigned transaction data, but this API intentionally returns only sanitized estimates and route/cost metadata. It does not provide bridge transaction construction, wallet signing, approval, or broadcast; quotes are time-sensitive estimates, not execution guarantees. Review current LI.FI commercial terms, account limits, chain/token coverage, and operational support before production rollout.
-
-Run verification:
+Copy the root `.env.example` to `.env`, set the Compose database and Redis credentials, set `WEB_ORIGIN`, the API secret, private RPC URLs and host allowlist, and `LIFI_API_KEY`. Then run:
 
 ```sh
-npm test
-npm run typecheck
-npm run build
-npm audit
+docker compose up --build
 ```
 
-The Solana wallet uses the mainnet RPC endpoint by default. Set `VITE_SOLANA_RPC_URL` to use another RPC endpoint. Set `VITE_API_URL` to override the API base URL (defaults to `http://localhost:3001/api`); onboarding progress remains available in local storage if preference synchronization is unavailable.
+The web app is served on `http://localhost:8080`. Compose starts PostgreSQL 17, a password-protected single-node Redis Cluster, and the web/API containers with persistent database/cache volumes and health checks. The API container runs Prisma migrations before starting. This is a single-host development/deployment baseline, not a highly available production topology: Redis has no replica/failover, and Compose does not configure external TLS termination, secret management, network policy, geo controls, backups, or multi-replica orchestration. Production operators must supply and verify those controls independently.
 
-## Current implementation scope
+## API surface
 
-The API includes PostgreSQL-backed registration/login, hashed rotating refresh tokens in HttpOnly cookies, short-lived JWT access tokens, role guards, and shared atomic Redis-backed request throttling when `REDIS_URL` is configured. Redis failures fail closed rather than silently switching production instances to independent counters. Development without Redis uses the framework's in-memory limiter. Authenticated swap quote and perpetual risk-check attempts are recorded with actor, outcome, and minimal operational metadata; Solana order and execution requests are also audited. SuperAdmins can review newest-first audit entries with exact action/actor filters and bounded cursor pagination; the viewer exposes recorded metadata, not raw request bodies. Registration cannot assign privileged roles.
+The API base path is `/api`; the full method/role summary is in [`docs/API.md`](docs/API.md). It includes:
 
-Container probes are available at `GET /api/health/live` (process liveness) and `GET /api/health/ready` (PostgreSQL and configured throttle-storage readiness). In development without Redis, readiness checks PostgreSQL and reports ready while the framework's in-memory throttle store is active. Root `npm test` and `npm run typecheck` generate the Prisma client before running.
+- Authentication, sessions, account administration, audit logs, health checks, and operator controls.
+- Read-only wallet portfolio pricing and cross-chain account aggregation, EVM allowance discovery, token screening, Solana market search, indicative EVM swap quotes, and LI.FI bridge quotes.
+- A simulated perpetual risk-check endpoint and Trader-gated EVM/Solana swap order, execution, and status endpoints.
 
-Each API response includes an `X-Request-Id`. A syntactically valid upstream UUID is normalized and reused; otherwise the API generates a UUID. The API emits one structured JSON completion log with method, path (without query string), response status, duration, and request ID. Request/response bodies and headers are not logged.
+Global request validation rejects unknown DTO fields. Global throttling defaults to 120 requests per minute, with route-specific limits on selected endpoints. There is no generated OpenAPI/Swagger document in this release candidate.
 
-API HTTP server spans use W3C `traceparent`/`tracestate` propagation and include only the HTTP method, response status, and request ID as span attributes. EVM quote aggregator attempts emit child spans with the provider name and a coarse outcome (`success`, `failure`, `circuit_open`, or `error`); token addresses, amounts, provider response bodies, and exception messages are not attached. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to an OTLP/HTTP collector URL to export traces; `/v1/traces` is appended when absent. `OTEL_SERVICE_NAME` defaults to `mega-gods-prompt-next-api`. Tracing is disabled when no endpoint is configured. Do not put credentials or query parameters in the collector URL; use the collector's supported environment-based authentication settings instead. Database and other downstream provider calls are not traced.
+## Security model and limitations
 
-Unexpected API errors can be reported to Sentry by setting `SENTRY_DSN` to an HTTPS DSN in production; error reporting is disabled when it is empty. Events retain only the error type, a generic message, and a validated request ID. Request data, users, headers, query strings, breadcrumbs, contexts, extras, and stack traces are removed before sending. Sentry tracing is disabled so it does not replace or duplicate the OpenTelemetry provider.
+- Non-custodial: the application does not request or store private keys or recovery phrases. EVM transactions are approved by the connected wallet. Solana swap execution forwards a locally signed transaction to Jupiter; the API does not possess the signing key.
+- Fail-closed operation: production requires PostgreSQL, a 32-byte JWT secret, Redis database 0, all configured private RPC URLs and their exact-host allowlist, and the LI.FI key. Shared Redis failures do not silently fall back to per-instance rate limits.
+- The global financial execution control is database-backed and initialized disabled. SuperAdmins can update it with an audited reason. It blocks new execution admissions, not transactions already handed to a wallet or already submitted.
+- Refresh-token values are kept in HttpOnly cookies and only SHA-256 hashes are persisted. Account password hashes use Argon2id. Account restrictions and sensitive administrative/control actions are audited.
+- The RPC hostname allowlist cannot prove that an endpoint is private; public-host rejection is finite. Use provider endpoints configured for private access, TLS, network egress controls, and deployment-specific monitoring.
+- Portfolio prices and market data are estimates. Screening is provider-reported heuristic data (Solana is explicitly GoPlus beta), may be incomplete, and is not a safety guarantee. The perpetual module is risk simulation only.
+- Bridge support is quote-only. There are no bridge execution intents or status tracking. There is no integrated KYC/AML/sanctions service, configurable enterprise feature flag system, generated OpenAPI specification, or coverage-threshold/security-scanning gate in the current CI workflow.
+- The Compose Redis Cluster is a single node without failover. A first production deployment still needs independently operated HA infrastructure, backups, TLS/origin protections, secrets management, monitoring, and a reviewed incident/recovery plan.
 
-The frontend includes session login, signup, sign-out, and refresh-session listing/revocation; SuperAdmin-only user role/account-status management, global financial execution kill switch, and audited controls for the existing EVM quote providers; wallet connection for injected EVM wallets and Phantom/Solflare-compatible Solana wallets, with account/network change and disconnect events clearing prior balances before the new portfolio is loaded; native and token balance reads for the connected network; manually tracked ERC-20 allowance reads and wallet-approved revocations with bounded recent-event discovery; simulated wallet-approved native transfers; noncustodial Jupiter Solana and 0x EVM swap flows; cross-chain read-only portfolio aggregation; skippable onboarding; and indicative EVM quotes compared across 0x, 1inch, and ParaSwap. Administrative restrictions are manual controls and do not constitute KYC/AML or sanctions screening. The perpetual endpoint remains a simplified risk simulation that does not place, sign, or broadcast orders. Neither swap integrations nor risk estimates are trading recommendations. Perpetual order execution and venue/clearinghouse selection, full-history or automatic token discovery beyond the bounded Approval-event scan, phishing/abuse controls, and vendor-backed KYC/AML/sanctions screening remain incomplete; this is not yet a production-ready enterprise trading platform. Both swap execution paths require provider credentials, applying database migrations, configured chain RPCs, a controlled rollout, and operational monitoring before production use.
+## First Stable Production Release
 
-The web app can be installed as a PWA over HTTPS and caches its static app shell for offline navigation. It saves up to five validated wallet portfolio snapshots in browser-local storage; these public-chain balances and indicative prices are device-specific, can be stale, are not synchronized or encrypted, and are never used to authorize transactions. API responses and authenticated requests are excluded from service-worker caching.
+`1.0.0-rc.1` is a pre-release candidate, **not** the First Stable Production Release. Do not represent it as production-certified or deploy it without completing the operational controls and resolving or formally accepting the limitations above. Stable `1.0.0` release preparation is a subsequent release step.
 
-Wallets retain control of private keys. The application does not request or store seed phrases or private keys. Review every network, recipient, amount, and fee in the wallet before approving a transaction.
+## UI previews
+
+These are direct Chromium screenshots of the running web app at 1440 × 1000 and 390 × 844. They show the unauthenticated guest experience with onboarding marked complete in browser storage; no wallet is connected and no live API data is represented. Viewer- and SuperAdmin-only controls are not shown because they require real authorized accounts.
+
+### Onboarding
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop onboarding dialog with progress, wallet-safety guidance, and next-step controls](docs/screenshots/onboarding-desktop.png) | ![Mobile onboarding dialog with responsive layout and touch-sized controls](docs/screenshots/onboarding-mobile.png) |
+
+### Sign-in and dashboard
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop guest dashboard with authentication and wallet entry points](docs/screenshots/dashboard-desktop.png) | ![Mobile guest dashboard with authentication and wallet entry points](docs/screenshots/dashboard-mobile.png) |
+
+### Wallet and portfolio
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop disconnected wallet panel and portfolio empty state](docs/screenshots/wallet-desktop.png) | ![Mobile disconnected wallet panel and portfolio empty state](docs/screenshots/wallet-mobile.png) |
+
+### Cross-chain quote
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop bridge quote form in its sign-in-required guest state](docs/screenshots/bridge-desktop.png) | ![Mobile bridge quote form in its sign-in-required guest state](docs/screenshots/bridge-mobile.png) |
+
+### Token screening
+
+| Desktop | Mobile |
+| --- | --- |
+| ![Desktop token screening form in its sign-in-required guest state](docs/screenshots/screening-desktop.png) | ![Mobile token screening form in its sign-in-required guest state](docs/screenshots/screening-mobile.png) |
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security and threat model](docs/SECURITY.md)
+- [Operations runbook](docs/OPERATIONS.md)
+- [API route summary](docs/API.md)
+- [Changelog](CHANGELOG.md)
