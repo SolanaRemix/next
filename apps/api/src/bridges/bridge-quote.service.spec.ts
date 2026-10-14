@@ -133,4 +133,32 @@ describe('BridgeQuoteService', () => {
     await expect(new BridgeQuoteService().quote(request))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
   });
+
+  it('does not count request-specific provider rejections against the circuit', async () => {
+    const recordProviderCircuitFailure = vi.fn();
+    const cache = {
+      claimProviderCircuitAttempt: vi.fn().mockResolvedValue(true),
+      recordProviderCircuitFailure,
+      recordProviderCircuitSuccess: vi.fn(),
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status: 400 })));
+
+    await expect(new BridgeQuoteService(cache as never).quote(request))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(recordProviderCircuitFailure).not.toHaveBeenCalled();
+  });
+
+  it.each([408, 429, 500, 503])('counts provider HTTP %s as a circuit failure', async (status) => {
+    const recordProviderCircuitFailure = vi.fn().mockResolvedValue(false);
+    const cache = {
+      claimProviderCircuitAttempt: vi.fn().mockResolvedValue(true),
+      recordProviderCircuitFailure,
+      recordProviderCircuitSuccess: vi.fn(),
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status })));
+
+    await expect(new BridgeQuoteService(cache as never).quote(request))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(recordProviderCircuitFailure).toHaveBeenCalledOnce();
+  });
 });

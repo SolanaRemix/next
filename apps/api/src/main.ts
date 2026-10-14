@@ -12,6 +12,7 @@ async function bootstrap(): Promise<void> {
   await startTelemetry();
   startSentry();
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
   app.setGlobalPrefix('api');
   app.use(createRequestLoggingMiddleware());
   app.use(cookieParser());

@@ -24,4 +24,21 @@ describe('UpdateAggregatorControlDto', () => {
         .resolves.not.toHaveLength(0);
     }
   });
+
+  it('trims audit reasons before applying the minimum length', async () => {
+    const valid = plainToInstance(UpdateAggregatorControlDto, {
+      enabledProviders: ['0x'],
+      reason: '  valid reason  ',
+    });
+    await expect(validate(valid)).resolves.toHaveLength(0);
+    expect(valid.reason).toBe('valid reason');
+
+    for (const reason of ['   ', ' x ']) {
+      const dto = plainToInstance(UpdateAggregatorControlDto, {
+        enabledProviders: ['0x'],
+        reason,
+      });
+      await expect(validate(dto)).resolves.not.toHaveLength(0);
+    }
+  });
 });

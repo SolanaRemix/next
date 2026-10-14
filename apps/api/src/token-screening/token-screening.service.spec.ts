@@ -72,8 +72,8 @@ describe('TokenScreeningService', () => {
       ...baselineSignals,
       is_honeypot: '1',
       is_blacklisted: '1',
-      buy_tax: '12',
-      sell_tax: '6',
+      buy_tax: '0.12',
+      sell_tax: '0.06',
     };
     stubProvider({ code: '1', result: { [tokenAddress.toUpperCase()]: token } });
 
@@ -148,8 +148,8 @@ describe('TokenScreeningService', () => {
         [tokenAddress]: {
           ...baselineSignals,
           is_honeypot: 'unknown',
-          buy_tax: '101',
-          sell_tax: '-1',
+          buy_tax: '1.01',
+          sell_tax: '-0.01',
         },
       },
     });

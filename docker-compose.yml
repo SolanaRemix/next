@@ -39,6 +39,7 @@ services:
       EVM_RPC_URL_8453: ${EVM_RPC_URL_8453:?Set a private Base RPC endpoint}
       EVM_RPC_URL_42161: ${EVM_RPC_URL_42161:?Set a private Arbitrum RPC endpoint}
       EVM_RPC_URL_43114: ${EVM_RPC_URL_43114:?Set a private Avalanche RPC endpoint}
+      LIFI_API_KEY: ${LIFI_API_KEY:?Set LIFI_API_KEY for production bridge quotes}
       JUPITER_API_KEY: ${JUPITER_API_KEY:-}
       ZEROX_API_KEY: ${ZEROX_API_KEY:-}
       ONEINCH_API_KEY: ${ONEINCH_API_KEY:-}

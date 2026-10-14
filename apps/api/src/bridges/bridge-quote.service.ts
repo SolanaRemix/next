@@ -22,6 +22,9 @@ const circuitProbeLeaseMs = quoteTimeoutMs + 2_000;
 const supportedEvmChainIds = new Set([1, 10, 56, 137, 8453, 42161, 43114]);
 const integerPattern = /^(?:0|[1-9]\d{0,77})$/;
 
+class ProviderFailureError extends Error {}
+class ProviderRequestError extends Error {}
+
 const quoteDisclaimer =
   'Indicative cross-chain quote only. It is not an execution instruction or guarantee; refresh and independently review all details before any wallet signing.';
 
@@ -185,7 +188,15 @@ export class BridgeQuoteService {
           let result: ValidatedQuote;
           try {
             result = await this.fetchQuote(request);
-          } catch {
+          } catch (error) {
+            if (error instanceof ProviderRequestError) {
+              outcome = 'request_error';
+              throw new BadRequestException('No cross-chain route is available for the requested transfer.');
+            }
+            if (!(error instanceof ProviderFailureError)) {
+              outcome = 'error';
+              throw new ServiceUnavailableException('Cross-chain quote provider is temporarily unavailable.');
+            }
             outcome = 'failure';
             await this.cache?.recordProviderCircuitFailure(
               providerName,
@@ -252,15 +263,27 @@ export class BridgeQuoteService {
         signal: AbortSignal.timeout(quoteTimeoutMs),
       });
     } catch {
-      throw new Error('LI.FI request failed.');
+      throw new ProviderFailureError('LI.FI request failed.');
     }
-    if (!response.ok) throw new Error(`LI.FI returned HTTP ${response.status}.`);
+    if (!response.ok) {
+      if (response.status === 408 || response.status === 429 || response.status >= 500) {
+        throw new ProviderFailureError(`LI.FI returned HTTP ${response.status}.`);
+      }
+      if (response.status >= 400 && response.status < 500) {
+        throw new ProviderRequestError(`LI.FI returned HTTP ${response.status}.`);
+      }
+      throw new ProviderFailureError(`LI.FI returned HTTP ${response.status}.`);
+    }
     let data: unknown;
     try {
       data = await response.json();
     } catch {
-      throw new Error('LI.FI returned invalid JSON.');
+      throw new ProviderFailureError('LI.FI returned invalid JSON.');
     }
-    return validateQuote(data, request);
+    try {
+      return validateQuote(data, request);
+    } catch {
+      throw new ProviderFailureError('LI.FI returned an invalid quote.');
+    }
   }
 }

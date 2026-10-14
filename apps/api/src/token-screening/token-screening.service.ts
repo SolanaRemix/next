@@ -142,7 +142,7 @@ function parseBoolean(value: unknown): boolean | null {
 function parseTax(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed * 100 : null;
 }
 
 function parseSignals(token: RawData): EvmTokenRiskSignals {
