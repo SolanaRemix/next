@@ -57,6 +57,8 @@ function isCachedQuote(value: unknown, request: SwapQuoteRequest): value is Swap
     value.sellAmount === request.sellAmount &&
     value.maxSlippageBps === request.maxSlippageBps &&
     Array.isArray(value.routes) &&
+    value.routes.length > 0 &&
+    value.routes.length <= providerNames.length &&
     value.routes.every((route: unknown) =>
       isRecord(route) &&
       typeof route.provider === 'string' &&
