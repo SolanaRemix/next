@@ -172,7 +172,7 @@ export class RedisThrottlerStorage
     await this.setCacheValue(`${this.namespace}:token-screening:{${key}}`, value, ttlMs);
   }
 
-  async claimQuoteProviderAttempt(provider: string, probeLeaseMs: number): Promise<boolean> {
+  async claimProviderCircuitAttempt(provider: string, probeLeaseMs: number): Promise<boolean> {
     if (!this.client) return true;
     const [, openKey, recoveryKey, probeKey] = this.quoteCircuitKeys(provider);
     let result: unknown;
@@ -190,7 +190,7 @@ export class RedisThrottlerStorage
     throw new ServiceUnavailableException('Shared quote circuit state is unavailable.');
   }
 
-  async recordQuoteProviderSuccess(provider: string): Promise<void> {
+  async recordProviderCircuitSuccess(provider: string): Promise<void> {
     if (!this.client) return;
     const [failuresKey, openKey, recoveryKey, probeKey] = this.quoteCircuitKeys(provider);
     let result: unknown;
@@ -209,7 +209,7 @@ export class RedisThrottlerStorage
     }
   }
 
-  async recordQuoteProviderFailure(
+  async recordProviderCircuitFailure(
     provider: string,
     failureWindowMs: number,
     failureThreshold: number,
@@ -240,10 +240,10 @@ export class RedisThrottlerStorage
     const identity = createHash('sha256').update(provider, 'utf8').digest('hex');
     const hashTag = `{${identity}}`;
     return [
-      `${this.namespace}:quote-circuit:${hashTag}:failures`,
-      `${this.namespace}:quote-circuit:${hashTag}:open`,
-      `${this.namespace}:quote-circuit:${hashTag}:recovery`,
-      `${this.namespace}:quote-circuit:${hashTag}:probe`,
+      `${this.namespace}:provider-circuit:${hashTag}:failures`,
+      `${this.namespace}:provider-circuit:${hashTag}:open`,
+      `${this.namespace}:provider-circuit:${hashTag}:recovery`,
+      `${this.namespace}:provider-circuit:${hashTag}:probe`,
     ];
   }
 

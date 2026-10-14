@@ -240,7 +240,7 @@ export class SwapQuoteService {
       async (span) => {
         let outcome = 'error';
         try {
-          if (this.cache && !await this.cache.claimQuoteProviderAttempt(
+          if (this.cache && !await this.cache.claimProviderCircuitAttempt(
             provider.name,
             circuitProbeLeaseMs,
           )) {
@@ -252,7 +252,7 @@ export class SwapQuoteService {
             result = await provider.quote(request);
           } catch (error) {
             outcome = 'failure';
-            await this.cache?.recordQuoteProviderFailure(
+            await this.cache?.recordProviderCircuitFailure(
               provider.name,
               circuitFailureWindowMs,
               circuitFailureThreshold,
@@ -260,7 +260,7 @@ export class SwapQuoteService {
             );
             throw error;
           }
-          await this.cache?.recordQuoteProviderSuccess(provider.name);
+          await this.cache?.recordProviderCircuitSuccess(provider.name);
           outcome = 'success';
           return { provider: provider.name, result };
         } finally {

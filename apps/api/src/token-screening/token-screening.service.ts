@@ -16,6 +16,10 @@ import { RedisThrottlerStorage } from '../throttling/redis-throttler.storage.js'
 
 const requestTimeoutMs = 8_000;
 const screeningCacheTtlMs = 10_000;
+const circuitFailureWindowMs = 30_000;
+const circuitFailureThreshold = 5;
+const circuitOpenDurationMs = 15_000;
+const circuitProbeLeaseMs = requestTimeoutMs + 2_000;
 const riskLevels = ['unknown', 'low', 'medium', 'high', 'critical'] as const;
 const supportedChainIds = new Set(['1', '10', '56', '137', '8453', '42161', '43114']);
 const contractAddressPattern = /^0x[a-fA-F0-9]{40}$/;
@@ -342,6 +346,35 @@ export class TokenScreeningService {
     }
   }
 
+  private async withProviderCircuit<T>(
+    provider: string,
+    unavailableMessage: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (this.cache?.claimProviderCircuitAttempt &&
+      !await this.cache.claimProviderCircuitAttempt(
+      provider,
+      circuitProbeLeaseMs,
+      )) {
+      throw new ServiceUnavailableException(unavailableMessage);
+    }
+
+    let result: T;
+    try {
+      result = await operation();
+    } catch (error) {
+      await this.cache?.recordProviderCircuitFailure?.(
+        provider,
+        circuitFailureWindowMs,
+        circuitFailureThreshold,
+        circuitOpenDurationMs,
+      );
+      throw error;
+    }
+    await this.cache?.recordProviderCircuitSuccess?.(provider);
+    return result;
+  }
+
   async screenEvmToken(
     requestedChainId: string,
     requestedTokenAddress: string,
@@ -358,37 +391,46 @@ export class TokenScreeningService {
     const key = screeningCacheKey(`evm:${chainId}:${tokenAddress}`);
     const cached = await this.readCache(key);
     if (isValidCachedEvmResponse(cached, chainId, tokenAddress)) return cached;
-    const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
-    url.searchParams.set('contract_addresses', tokenAddress);
+    const screening = await this.withProviderCircuit(
+      `goplus:evm:${chainId}`,
+      'Token security provider is temporarily unavailable.',
+      async () => {
+        const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
+        url.searchParams.set('contract_addresses', tokenAddress);
 
-    let response: Response;
-    try {
-      response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
-    } catch {
-      throw new ServiceUnavailableException('Token security provider is unavailable.');
-    }
-    if (!response.ok) throw new ServiceUnavailableException('Token security provider is unavailable.');
+        let response: Response;
+        try {
+          response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
+        } catch {
+          throw new ServiceUnavailableException('Token security provider is unavailable.');
+        }
+        if (!response.ok) {
+          throw new ServiceUnavailableException('Token security provider is unavailable.');
+        }
 
-    const payload: unknown = await response.json().catch(() => null);
-    if (!isRecord(payload) || (payload.code !== 1 && payload.code !== '1') || !isRecord(payload.result)) {
-      throw new ServiceUnavailableException('Token security provider returned invalid data.');
-    }
-    const tokenResult = Object.entries(payload.result)
-      .find(([address]) => address.toLowerCase() === tokenAddress)?.[1];
-    const signals = isRecord(tokenResult) ? parseSignals(tokenResult) : parseSignals({});
-    const assessment = assessRisk(signals);
-
-    const screening: EvmTokenRiskScreeningResponse = {
-      chainId,
-      tokenAddress,
-      source: 'GoPlus',
-      ...assessment,
-      observedSignals: signalCoverage(signals),
-      totalSignals: Object.keys(signals).length,
-      signals,
-      asOf: new Date().toISOString(),
-      disclaimer,
-    };
+        const payload: unknown = await response.json().catch(() => null);
+        if (!isRecord(payload) ||
+          (payload.code !== 1 && payload.code !== '1') ||
+          !isRecord(payload.result)) {
+          throw new ServiceUnavailableException('Token security provider returned invalid data.');
+        }
+        const tokenResult = Object.entries(payload.result)
+          .find(([address]) => address.toLowerCase() === tokenAddress)?.[1];
+        const signals = isRecord(tokenResult) ? parseSignals(tokenResult) : parseSignals({});
+        const assessment = assessRisk(signals);
+        return {
+          chainId,
+          tokenAddress,
+          source: 'GoPlus',
+          ...assessment,
+          observedSignals: signalCoverage(signals),
+          totalSignals: Object.keys(signals).length,
+          signals,
+          asOf: new Date().toISOString(),
+          disclaimer,
+        } satisfies EvmTokenRiskScreeningResponse;
+      },
+    );
     await this.writeCache(key, screening);
     return screening;
   }
@@ -402,38 +444,44 @@ export class TokenScreeningService {
     const key = screeningCacheKey(`solana:${normalizedMint}`);
     const cached = await this.readCache(key);
     if (isValidCachedSolanaResponse(cached, normalizedMint)) return cached;
-    const url = new URL('https://api.gopluslabs.io/api/v1/solana/token_security');
-    url.searchParams.set('contract_addresses', normalizedMint);
+    const screening = await this.withProviderCircuit(
+      'goplus:solana-mainnet',
+      'Solana token security provider is temporarily unavailable.',
+      async () => {
+        const url = new URL('https://api.gopluslabs.io/api/v1/solana/token_security');
+        url.searchParams.set('contract_addresses', normalizedMint);
 
-    let response: Response;
-    try {
-      response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
-    } catch {
-      throw new ServiceUnavailableException('Solana token security provider is unavailable.');
-    }
-    if (!response.ok) {
-      throw new ServiceUnavailableException('Solana token security provider is unavailable.');
-    }
+        let response: Response;
+        try {
+          response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
+        } catch {
+          throw new ServiceUnavailableException('Solana token security provider is unavailable.');
+        }
+        if (!response.ok) {
+          throw new ServiceUnavailableException('Solana token security provider is unavailable.');
+        }
 
-    const payload: unknown = await response.json().catch(() => null);
-    if (!isRecord(payload) || payload.code !== 1 || !isRecord(payload.result)) {
-      throw new ServiceUnavailableException('Solana token security provider returned invalid data.');
-    }
-    const tokenResult = Object.entries(payload.result)
-      .find(([address]) => address === normalizedMint)?.[1];
-    const signals = isRecord(tokenResult) ? parseSolanaSignals(tokenResult) : parseSolanaSignals({});
+        const payload: unknown = await response.json().catch(() => null);
+        if (!isRecord(payload) || payload.code !== 1 || !isRecord(payload.result)) {
+          throw new ServiceUnavailableException('Solana token security provider returned invalid data.');
+        }
+        const tokenResult = Object.entries(payload.result)
+          .find(([address]) => address === normalizedMint)?.[1];
+        const signals = isRecord(tokenResult) ? parseSolanaSignals(tokenResult) : parseSolanaSignals({});
 
-    const screening: SolanaTokenRiskScreeningResponse = {
-      network: 'solana-mainnet',
-      tokenAddress: normalizedMint,
-      source: 'GoPlus Solana beta',
-      ...assessSolanaRisk(signals),
-      observedSignals: Object.values(signals).filter((value) => value !== null).length,
-      totalSignals: Object.keys(signals).length,
-      signals,
-      asOf: new Date().toISOString(),
-      disclaimer: solanaDisclaimer,
-    };
+        return {
+          network: 'solana-mainnet',
+          tokenAddress: normalizedMint,
+          source: 'GoPlus Solana beta',
+          ...assessSolanaRisk(signals),
+          observedSignals: Object.values(signals).filter((value) => value !== null).length,
+          totalSignals: Object.keys(signals).length,
+          signals,
+          asOf: new Date().toISOString(),
+          disclaimer: solanaDisclaimer,
+        } satisfies SolanaTokenRiskScreeningResponse;
+      },
+    );
     await this.writeCache(key, screening);
     return screening;
   }

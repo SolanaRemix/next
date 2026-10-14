@@ -294,6 +294,85 @@ describe('TokenScreeningService', () => {
     expect(response.riskLevel).toBe('low');
   });
 
+  it('opens a per-network GoPlus circuit after five failures and admits a Solana request separately', async () => {
+    const failures = new Map<string, number>();
+    const claimProviderCircuitAttempt = vi.fn(async (provider: string) =>
+      (failures.get(provider) ?? 0) < 5);
+    const recordProviderCircuitFailure = vi.fn(async (provider: string) => {
+      failures.set(provider, (failures.get(provider) ?? 0) + 1);
+      return (failures.get(provider) ?? 0) >= 5;
+    });
+    const cache = {
+      getTokenScreeningCache: vi.fn().mockResolvedValue(null),
+      setTokenScreeningCache: vi.fn().mockResolvedValue(undefined),
+      claimProviderCircuitAttempt,
+      recordProviderCircuitFailure,
+      recordProviderCircuitSuccess: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisThrottlerStorage;
+    const service = new TokenScreeningService(cache);
+    let evmRequests = 0;
+    const providerSignals = {
+      mintable: { status: '0' },
+      freezable: { status: '0' },
+      closable: { status: '0' },
+      balance_mutable_authority: { status: '0' },
+      metadata_mutable: { status: '0' },
+      transfer_fee: { current_fee_rate: { fee_rate: '0' } },
+      transfer_fee_upgradable: { status: '0' },
+      transfer_hook: [],
+      transfer_hook_upgradable: { status: '0' },
+      default_account_state: '1',
+      default_account_state_upgradable: { status: '0' },
+      none_transferable: '0',
+      trusted_token: 1,
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      if (new URL(String(input)).pathname.endsWith('/solana/token_security')) {
+        return Response.json({ code: 1, result: { [solanaMint]: providerSignals } });
+      }
+      evmRequests += 1;
+      return new Response('{}', { status: 503 });
+    }));
+
+    for (let index = 0; index < 5; index += 1) {
+      await expect(service.screenEvmToken('1', tokenAddress))
+        .rejects.toBeInstanceOf(ServiceUnavailableException);
+    }
+    await expect(service.screenEvmToken('1', tokenAddress))
+      .rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    const solana = await service.screenSolanaToken(solanaMint);
+
+    expect(evmRequests).toBe(5);
+    expect(recordProviderCircuitFailure).toHaveBeenCalledTimes(5);
+    expect(claimProviderCircuitAttempt).toHaveBeenCalledWith('goplus:evm:1', 10_000);
+    expect(claimProviderCircuitAttempt).toHaveBeenCalledWith('goplus:solana-mainnet', 10_000);
+    expect(solana.riskLevel).toBe('low');
+  });
+
+  it('serves a validated cached result without probing an open provider circuit', async () => {
+    const entries = new Map<string, string>();
+    const cache = {
+      getTokenScreeningCache: vi.fn(async (key: string) => entries.get(key) ?? null),
+      setTokenScreeningCache: vi.fn(async (key: string, value: string) => {
+        entries.set(key, value);
+      }),
+      claimProviderCircuitAttempt: vi.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValue(false),
+      recordProviderCircuitFailure: vi.fn().mockResolvedValue(false),
+      recordProviderCircuitSuccess: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisThrottlerStorage;
+    const service = new TokenScreeningService(cache);
+    stubProvider({ code: 1, result: { [tokenAddress]: baselineSignals } });
+
+    const response = await service.screenEvmToken('1', tokenAddress);
+    const cachedResponse = await service.screenEvmToken('1', tokenAddress);
+
+    expect(cachedResponse).toEqual(response);
+    expect(cache.claimProviderCircuitAttempt).toHaveBeenCalledOnce();
+  });
+
   it('keeps Solana screening cache entries isolated from EVM and other mints', async () => {
     const keys: string[] = [];
     const cache = {
