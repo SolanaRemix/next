@@ -8,6 +8,7 @@ import { amountInUsd, calculatePortfolioUsdValue, formatUsd } from "./portfolioV
 import { addEvmTokenToWatchlist, loadEvmTokenWatchlist, removeEvmTokenFromWatchlist } from "./tokenWatchlist";
 import { loadLatestOfflinePortfolio, saveOfflinePortfolio } from "./offlinePortfolio";
 import type { OfflinePortfolioSnapshot } from "./offlinePortfolio";
+import { CrossChainPortfolioPanel } from "./CrossChainPortfolioPanel";
 import {
   readEvmTokenAllowances,
   readEvmTokenAllowance,
@@ -555,6 +556,12 @@ export function WalletPanel() {
           </form>
         </>
       )}
+      <CrossChainPortfolioPanel
+        accessToken={accessToken}
+        canView={Boolean(accessToken && user && roleRank[user.role] >= roleRank.Viewer)}
+        connectedAccount={account}
+        userId={user?.id ?? null}
+      />
       {error && <p className="message message--error" role="alert">{error} <button type="button" onClick={clearError}>Dismiss</button></p>}
       {notice && <p className="message" role="status">{notice}</p>}
       <p className="wallet-disclaimer">Transactions are sent to your wallet for approval. Verify chain, address, and amount before confirming.</p>

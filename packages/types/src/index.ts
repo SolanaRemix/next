@@ -20,6 +20,37 @@ export interface WalletBalance {
   kind?: "native" | "token";
 }
 
+export interface CrossChainPortfolioAccountRequest {
+  address: string;
+  chain: WalletChain;
+  chainId: string;
+  tokenAddresses: string[];
+}
+
+export interface CrossChainPortfolioRequest {
+  accounts: CrossChainPortfolioAccountRequest[];
+}
+
+export interface CrossChainPortfolioAsset {
+  balance: WalletBalance;
+  priceUsd: number | null;
+  valueUsd: number | null;
+}
+
+export interface CrossChainPortfolioAccountResult {
+  account: Pick<CrossChainPortfolioAccountRequest, "address" | "chain" | "chainId">;
+  available: boolean;
+  assets: CrossChainPortfolioAsset[];
+  totalUsd: number | null;
+}
+
+export interface CrossChainPortfolioResponse {
+  accounts: CrossChainPortfolioAccountResult[];
+  totalUsd: number | null;
+  complete: boolean;
+  asOf: string;
+}
+
 export interface NativeTransferRequest {
   chain: WalletChain;
   to: string;
