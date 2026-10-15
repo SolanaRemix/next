@@ -10,11 +10,15 @@
   "scripts": {
     "dev": "npm run dev --workspace @next/web",
     "dev:api": "npm run start:dev --workspace @next/api",
-    "build": "npm run typecheck && npm run build --workspace @next/web && npm run build --workspace @next/api",
-    "test": "npm run db:generate --workspace @next/api && npm run test --workspace @next/web && npm run test --workspace @next/api",
-    "typecheck": "npm run db:generate --workspace @next/api && tsc --build"
+    "build": "npm run typecheck && npm run build --workspace @next/web && npm run build --workspace @next/api && npm run build --workspace @next/api-client",
+    "test": "npm run db:generate --workspace @next/api && npm run test --workspace @next/web && npm run test --workspace @next/api && npm run test --workspace @next/api-client",
+    "typecheck": "npm run db:generate --workspace @next/api && tsc --build",
+    "openapi:generate": "npm run generate --workspace @next/api-client",
+    "openapi:check": "node scripts/check-openapi.mjs"
   },
   "devDependencies": {
+    "openapi-zod-client": "1.18.3",
+    "yaml": "2.9.1",
     "@types/react": "18.3.18",
     "@types/react-dom": "18.3.5",
     "@vitejs/plugin-react": "4.3.4",

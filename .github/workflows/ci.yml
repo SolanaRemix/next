@@ -27,6 +27,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Check OpenAPI contract and generated SDK
+        run: npm run openapi:check
       - name: Typecheck
         run: npm run typecheck
       - name: Test
