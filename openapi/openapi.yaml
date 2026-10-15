@@ -211,11 +211,13 @@ paths:
             format: uuid
       responses:
         '200':
-          description: Bounded cursor-paginated user list.
+          description: Bounded user list; an optional cursor skips the supplied user record.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PaginatedUsers'
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUser'
   /auth/users/{id}/role:
     patch:
       operationId: assignUserRole
@@ -240,7 +242,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminUser'
+                $ref: '#/components/schemas/PublicUser'
   /auth/users/{id}/status:
     patch:
       operationId: updateUserStatus
@@ -851,17 +853,6 @@ components:
           type: string
         expiresIn:
           type: integer
-    PaginatedUsers:
-      type: object
-      required: [items, nextCursor]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminUser'
-        nextCursor:
-          type: [string, 'null']
-          format: uuid
     HealthStatus:
       type: object
       properties:
@@ -1260,8 +1251,10 @@ components:
                 items:
                   type: string
               priceSource:
-                type: [string, 'null']
-                enum: [Jupiter, DEX Screener, null]
+                oneOf:
+                  - type: string
+                    enum: [Jupiter, DEX Screener]
+                  - type: 'null'
         unavailableProviders:
           type: array
           items:

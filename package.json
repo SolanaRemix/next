@@ -10,25 +10,29 @@
   "scripts": {
     "dev": "npm run dev --workspace @next/web",
     "dev:api": "npm run start:dev --workspace @next/api",
+    "lint": "eslint apps packages scripts --max-warnings=0",
     "build": "npm run typecheck && npm run build --workspace @next/web && npm run build --workspace @next/api && npm run build --workspace @next/api-client",
     "test": "npm run db:generate --workspace @next/api && npm run test --workspace @next/web && npm run test --workspace @next/api && npm run test --workspace @next/api-client",
     "typecheck": "npm run db:generate --workspace @next/api && tsc --build",
     "openapi:generate": "npm run generate --workspace @next/api-client",
-    "openapi:check": "node scripts/check-openapi.mjs"
+    "openapi:check": "node scripts/check-openapi.mjs",
+    "type-check": "npm run typecheck"
   },
   "devDependencies": {
-    "openapi-zod-client": "1.18.3",
-    "yaml": "2.9.1",
+    "@tailwindcss/vite": "4.3.3",
     "@types/react": "18.3.18",
     "@types/react-dom": "18.3.5",
     "@vitejs/plugin-react": "4.3.4",
+    "eslint": "^10.12.0",
     "jsdom": "25.0.1",
-    "@tailwindcss/vite": "4.3.3",
+    "openapi-zod-client": "1.18.3",
     "postcss": "8.5.29",
     "tailwindcss": "4.3.3",
     "typescript": "5.7.3",
+    "typescript-eslint": "^8.71.2",
     "vite": "6.4.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "yaml": "2.9.1"
   },
   "overrides": {
     "jayson": {

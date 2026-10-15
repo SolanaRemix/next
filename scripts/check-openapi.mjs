@@ -14,6 +14,7 @@ const httpMethods = new Set(['get', 'post', 'put', 'patch', 'delete', 'options',
 const routeMethods = new Set([...httpMethods].map((method) => method[0].toUpperCase() + method.slice(1)));
 const documentedRoutes = new Set();
 const operationIds = new Set();
+const routeRoles = new Map();
 
 if (!spec || !String(spec.openapi).startsWith('3.1.') || !spec.paths) {
   throw new Error('OpenAPI contract must define an OpenAPI 3.1 document with paths.');
@@ -32,7 +33,13 @@ for (const [path, pathItem] of Object.entries(spec.paths)) {
       throw new Error(`Operation has no x-minimum-role: ${method.toUpperCase()} ${path}`);
     }
     operationIds.add(operation.operationId);
-    documentedRoutes.add(`${method.toUpperCase()} ${path}`);
+    const route = `${method.toUpperCase()} ${path}`;
+    const security = Object.hasOwn(operation, 'security') ? operation.security : spec.security;
+    if ((operation['x-minimum-role'] === 'Public') !== (Array.isArray(security) && security.length === 0)) {
+      throw new Error(`OpenAPI security does not match x-minimum-role: ${route}`);
+    }
+    documentedRoutes.add(route);
+    routeRoles.set(route, operation['x-minimum-role']);
   }
 }
 
@@ -54,6 +61,20 @@ function staticPath(call, filePath, decoratorName) {
   throw new Error(`Non-static @${decoratorName} route in ${relative(root, filePath)}.`);
 }
 
+function accessFrom(decorators, inheritedRole = 'Guest') {
+  const calls = decorators.map(decoratorCall);
+  if (calls.some((call) => call?.name === 'Public')) return 'Public';
+  const roleCall = calls.find((call) => call?.name === 'Roles');
+  if (!roleCall) return inheritedRole;
+  const roles = roleCall.args.filter(
+    (argument) => ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument),
+  ).map((argument) => argument.text);
+  const roleRanks = ['Guest', 'Viewer', 'Trader', 'EnterpriseAdmin', 'SuperAdmin'];
+  const minimumRole = roles.sort((left, right) => roleRanks.indexOf(left) - roleRanks.indexOf(right))[0];
+  if (!minimumRole) throw new Error('@Roles must have at least one static role argument.');
+  return minimumRole;
+}
+
 function collectControllerFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = join(directory, entry.name);
@@ -73,6 +94,7 @@ for (const filePath of collectControllerFiles(join(root, 'apps/api/src'))) {
       .find((call) => call?.name === 'Controller');
     if (!controllerDecorator) continue;
     const controllerPath = staticPath(controllerDecorator, filePath, 'Controller');
+    const controllerRole = accessFrom(decorators);
     for (const member of statement.members) {
       if (!ts.isMethodDeclaration(member)) continue;
       const methodDecorators = ts.canHaveDecorators(member) ? ts.getDecorators(member) ?? [] : [];
@@ -87,6 +109,7 @@ for (const filePath of collectControllerFiles(join(root, 'apps/api/src'))) {
         const route = `${method} /${combinedPath}`;
         if (implementedRoutes.has(route)) throw new Error(`Duplicate runtime route: ${route}`);
         implementedRoutes.add(route);
+        routeRoles.set(`${route}#runtime`, accessFrom(methodDecorators, controllerRole));
       }
     }
   }
@@ -94,11 +117,18 @@ for (const filePath of collectControllerFiles(join(root, 'apps/api/src'))) {
 
 const undocumented = [...implementedRoutes].filter((route) => !documentedRoutes.has(route)).sort();
 const stale = [...documentedRoutes].filter((route) => !implementedRoutes.has(route)).sort();
-if (undocumented.length > 0 || stale.length > 0) {
+const roleMismatches = [...documentedRoutes].filter(
+  (route) => routeRoles.get(route) !== routeRoles.get(`${route}#runtime`),
+).sort();
+if (undocumented.length > 0 || stale.length > 0 || roleMismatches.length > 0) {
   throw new Error([
     'OpenAPI route parity check failed.',
     ...(undocumented.length > 0 ? [`Undocumented runtime routes:\n${undocumented.join('\n')}`] : []),
     ...(stale.length > 0 ? [`Contract routes missing at runtime:\n${stale.join('\n')}`] : []),
+    ...(roleMismatches.length > 0
+      ? [`Minimum-role contract mismatches:\n${roleMismatches.map((route) =>
+        `${route}: contract=${routeRoles.get(route)}, runtime=${routeRoles.get(`${route}#runtime`)}`).join('\n')}`]
+      : []),
   ].join('\n\n'));
 }
 

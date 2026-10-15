@@ -57,12 +57,6 @@ const AdminUser = PublicUser.and(
     })
     .passthrough()
 );
-const PaginatedUsers = z
-  .object({
-    items: z.array(AdminUser),
-    nextCursor: z.union([z.string(), z.null()]),
-  })
-  .passthrough();
 const assignUserRole_Body = z.object({ role: UserRole });
 const updateUserStatus_Body = z.object({
   status: z.enum(["Active", "Restricted"]),
@@ -278,10 +272,7 @@ const SolanaMarketSearchResponse = z
           liquidityUsd: z.union([z.number(), z.null()]),
           volume24hUsd: z.union([z.number(), z.null()]),
           venues: z.array(z.string()),
-          priceSource: z.union([
-            z.enum(["Jupiter", "DEX Screener", null]),
-            z.null(),
-          ]),
+          priceSource: z.union([z.enum(["Jupiter", "DEX Screener"]), z.null()]),
         })
         .passthrough()
     ),
@@ -510,7 +501,6 @@ export const schemas = {
   ChangePassword,
   PasswordChangeResult,
   AdminUser,
-  PaginatedUsers,
   assignUserRole_Body,
   updateUserStatus_Body,
   HealthStatus,
@@ -789,7 +779,7 @@ const endpoints = makeApi([
         schema: z.string().uuid().optional(),
       },
     ],
-    response: PaginatedUsers,
+    response: z.array(AdminUser),
   },
   {
     method: "patch",
@@ -808,7 +798,7 @@ const endpoints = makeApi([
         schema: z.string().uuid(),
       },
     ],
-    response: AdminUser,
+    response: PublicUser,
   },
   {
     method: "patch",

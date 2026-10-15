@@ -9,7 +9,7 @@ The API has server-side DTO validation but no machine-readable contract or suppo
 
 ## Decision
 
-Maintain OpenAPI 3.1 as the API contract at `openapi/openapi.yaml`. Generate the `@next/api-client` package from that contract using `openapi-zod-client`, providing typed Zodios clients and Zod runtime request/response schemas. CI compares the OpenAPI path/method set to NestJS controller decorators and verifies generated output is current.
+Maintain OpenAPI 3.1 as the API contract at `openapi/openapi.yaml`. Generate the `@next/api-client` package from that contract using `openapi-zod-client`, providing typed Zodios clients and Zod runtime request/response schemas. CI compares the OpenAPI path/method set and minimum-role/public-security metadata to NestJS controller decorators and verifies generated output is current.
 
 The existing NestJS DTOs and global validation pipe remain the server-side enforcement boundary. The contract and generated SDK do not replace server authorization, DTO validation, or provider-specific checks.
 
