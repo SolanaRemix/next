@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and uses Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- OpenAPI 3.1 contract at `openapi/openapi.yaml`, generated typed API client and Zod validation schemas, and CI route-parity checks.
+
 ## [1.0.0-rc.1] - 2026-10-14
 
 ### Added

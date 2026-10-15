@@ -1,0 +1,1617 @@
+openapi: 3.1.0
+info:
+  title: SolanaRemix API
+  version: 1.0.0-rc.1
+  description: |
+    Contract-first API definition. Runtime API paths are mounted below `/api`.
+    Authenticated operations use a bearer access token unless marked public.
+servers:
+  - url: /api
+security:
+  - bearerAuth: []
+tags:
+  - name: Authentication
+  - name: Administration
+  - name: Health
+  - name: Portfolio
+  - name: Screening
+  - name: Market data
+  - name: Swaps
+  - name: Bridges
+  - name: Perpetuals
+paths:
+  /auth/register:
+    post:
+      operationId: register
+      tags: [Authentication]
+      security: []
+      x-minimum-role: Public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '201':
+          description: Created account and access session; refresh token is set as an HttpOnly cookie.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Authentication]
+      security: []
+      x-minimum-role: Public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '200':
+          description: Authenticated user and access session; refresh token is set as an HttpOnly cookie.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [Authentication]
+      security: []
+      x-minimum-role: Public
+      parameters:
+        - $ref: '#/components/parameters/RefreshCookie'
+      responses:
+        '200':
+          description: Rotated access session; refresh token is set as an HttpOnly cookie.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [Authentication]
+      security: []
+      x-minimum-role: Public
+      parameters:
+        - $ref: '#/components/parameters/RefreshCookie'
+      responses:
+        '204':
+          description: Refresh session revoked and cookie cleared.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+  /auth/sessions:
+    get:
+      operationId: listSessions
+      tags: [Authentication]
+      x-minimum-role: Guest
+      responses:
+        '200':
+          description: Refresh sessions for the authenticated user.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RefreshSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/password:
+    patch:
+      operationId: changePassword
+      tags: [Authentication]
+      x-minimum-role: Guest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePassword'
+      responses:
+        '200':
+          description: Password changed and other refresh sessions revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordChangeResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/sessions/revoke-others:
+    delete:
+      operationId: revokeOtherSessions
+      tags: [Authentication]
+      x-minimum-role: Guest
+      responses:
+        '200':
+          description: Other refresh sessions revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revokedCount]
+                properties:
+                  revokedCount:
+                    type: integer
+                    minimum: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/sessions/{id}:
+    delete:
+      operationId: revokeSession
+      tags: [Authentication]
+      x-minimum-role: Guest
+      parameters:
+        - $ref: '#/components/parameters/UuidPathId'
+      responses:
+        '204':
+          description: Session revoked.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Authentication]
+      x-minimum-role: Guest
+      responses:
+        '200':
+          description: Current authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUser'
+  /auth/users:
+    get:
+      operationId: listUsers
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Bounded user list; an optional cursor skips the supplied user record.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUser'
+  /auth/users/{id}/role:
+    patch:
+      operationId: assignUserRole
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      parameters:
+        - $ref: '#/components/parameters/UuidPathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role:
+                  $ref: '#/components/schemas/UserRole'
+      responses:
+        '200':
+          description: User role updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUser'
+  /auth/users/{id}/status:
+    patch:
+      operationId: updateUserStatus
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      parameters:
+        - $ref: '#/components/parameters/UuidPathId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status:
+                  type: string
+                  enum: [Active, Restricted]
+                reason:
+                  type: string
+                  enum: [account_compromise, policy_review, legal_request, other]
+      responses:
+        '200':
+          description: Account status updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUser'
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [Health]
+      security: []
+      x-minimum-role: Public
+      responses:
+        '200':
+          description: Process liveness.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags: [Health]
+      security: []
+      x-minimum-role: Public
+      responses:
+        '200':
+          description: Dependency readiness.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: actorId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 120
+      responses:
+        '200':
+          description: Bounded cursor-paginated audit events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogPage'
+  /admin/financial-controls/execution:
+    get:
+      operationId: getExecutionControl
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      responses:
+        '200':
+          description: Current global financial-execution control.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionControl'
+    patch:
+      operationId: updateExecutionControl
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutionControlUpdate'
+      responses:
+        '200':
+          description: Execution control updated and audited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionControl'
+  /admin/aggregator-controls/evm-quotes:
+    get:
+      operationId: getEvmQuoteControl
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      responses:
+        '200':
+          description: Enabled EVM quote providers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregatorControl'
+    patch:
+      operationId: updateEvmQuoteControl
+      tags: [Administration]
+      x-minimum-role: SuperAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AggregatorControlUpdate'
+      responses:
+        '200':
+          description: Quote provider control updated and audited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregatorControl'
+  /portfolio/evm-allowances/discover:
+    post:
+      operationId: discoverEvmAllowances
+      tags: [Portfolio]
+      x-minimum-role: Viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvmAllowanceDiscoveryRequest'
+      responses:
+        '200':
+          description: Recent EVM approval-event discovery results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvmAllowanceDiscoveryResponse'
+  /portfolio/aggregate:
+    post:
+      operationId: aggregatePortfolio
+      tags: [Portfolio]
+      x-minimum-role: Viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CrossChainPortfolioRequest'
+      responses:
+        '200':
+          description: Read-only balances and indicative portfolio valuations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrossChainPortfolioResponse'
+  /portfolio/evm-prices:
+    post:
+      operationId: getEvmPortfolioPrices
+      tags: [Portfolio]
+      x-minimum-role: Viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvmPortfolioPricesRequest'
+      responses:
+        '200':
+          description: Indicative EVM asset prices.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioPricesResponse'
+  /portfolio/solana-prices:
+    post:
+      operationId: getSolanaPortfolioPrices
+      tags: [Portfolio]
+      x-minimum-role: Viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolanaPortfolioPricesRequest'
+      responses:
+        '200':
+          description: Indicative Solana asset prices.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortfolioPricesResponse'
+  /token-screening/evm:
+    get:
+      operationId: screenEvmToken
+      tags: [Screening]
+      x-minimum-role: Viewer
+      parameters:
+        - name: chainId
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^(?:1|10|56|137|8453|42161|43114|0[xX](?:1|[aA]|38|89|2105|[aA]4b1|[aA]86[aA]))$'
+        - name: tokenAddress
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/EvmAddress'
+      responses:
+        '200':
+          description: GoPlus EVM token risk indicators; not transaction authorization.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvmTokenScreeningResponse'
+  /token-screening/solana:
+    get:
+      operationId: screenSolanaToken
+      tags: [Screening]
+      x-minimum-role: Viewer
+      parameters:
+        - name: mint
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/SolanaAddress'
+      responses:
+        '200':
+          description: GoPlus beta Solana token risk indicators; not transaction authorization.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolanaTokenScreeningResponse'
+  /solana-market/search:
+    get:
+      operationId: searchSolanaMarket
+      tags: [Market data]
+      x-minimum-role: Viewer
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 32
+      responses:
+        '200':
+          description: Indicative Solana token and venue data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolanaMarketSearchResponse'
+  /swaps/quote:
+    post:
+      operationId: getSwapQuote
+      tags: [Swaps]
+      x-minimum-role: Viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwapQuoteRequest'
+      responses:
+        '200':
+          description: Indicative EVM quotes only; this operation does not execute transactions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwapQuoteResponse'
+  /bridges/quote:
+    post:
+      operationId: getBridgeQuote
+      tags: [Bridges]
+      x-minimum-role: Viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BridgeQuoteRequest'
+      responses:
+        '200':
+          description: Sanitized indicative LI.FI route; no transaction data or execution instruction is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeQuoteResponse'
+  /perpetuals/risk-check:
+    post:
+      operationId: checkPerpetualRisk
+      tags: [Perpetuals]
+      x-minimum-role: Trader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PerpetualRiskCheckRequest'
+      responses:
+        '200':
+          description: Simulation result only; no order is placed or broadcast.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerpetualRiskCheckResponse'
+  /swaps/evm/order:
+    post:
+      operationId: createEvmSwapOrder
+      tags: [Swaps]
+      x-minimum-role: Trader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvmSwapOrderRequest'
+      responses:
+        '200':
+          description: 0x order data for wallet-mediated execution.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvmSwapOrderResponse'
+  /swaps/evm/execute:
+    post:
+      operationId: submitEvmSwap
+      tags: [Swaps]
+      x-minimum-role: Trader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvmSwapExecuteRequest'
+      responses:
+        '200':
+          description: Submitted transaction settlement state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvmSwapExecuteResponse'
+  /swaps/evm/{executionId}:
+    get:
+      operationId: getEvmSwapStatus
+      tags: [Swaps]
+      x-minimum-role: Trader
+      parameters:
+        - $ref: '#/components/parameters/UuidPathExecutionId'
+      responses:
+        '200':
+          description: Caller-scoped EVM swap settlement state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvmSwapExecuteResponse'
+  /swaps/solana/order:
+    post:
+      operationId: createSolanaSwapOrder
+      tags: [Swaps]
+      x-minimum-role: Trader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolanaSwapOrderRequest'
+      responses:
+        '200':
+          description: Unsigned Jupiter transaction for local wallet signing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolanaSwapOrderResponse'
+  /swaps/solana/execute:
+    post:
+      operationId: submitSolanaSwap
+      tags: [Swaps]
+      x-minimum-role: Trader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolanaSwapExecuteRequest'
+      responses:
+        '200':
+          description: Relayed signed transaction status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolanaSwapExecuteResponse'
+  /swaps/solana/{executionId}:
+    get:
+      operationId: getSolanaSwapStatus
+      tags: [Swaps]
+      x-minimum-role: Trader
+      parameters:
+        - $ref: '#/components/parameters/UuidPathExecutionId'
+      responses:
+        '200':
+          description: Caller-scoped Solana swap status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolanaSwapExecuteResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RefreshCookie:
+      name: refresh_token
+      in: cookie
+      required: false
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{43}$'
+    UuidPathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UuidPathExecutionId:
+      name: executionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Unauthorized:
+      description: Authentication required or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    NotFound:
+      description: Resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Conflict:
+      description: Request conflicts with current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    ServiceUnavailable:
+      description: A required dependency is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+  schemas:
+    ApiError:
+      type: object
+      required: [statusCode, message]
+      properties:
+        statusCode:
+          type: integer
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        error:
+          type: string
+    UserRole:
+      type: string
+      enum: [SuperAdmin, EnterpriseAdmin, Trader, Viewer, Guest]
+    PublicUser:
+      type: object
+      additionalProperties: false
+      required: [id, email, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/UserRole'
+    AdminUser:
+      allOf:
+        - $ref: '#/components/schemas/PublicUser'
+        - type: object
+          required: [createdAt, accountStatus]
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+            accountStatus:
+              type: string
+              enum: [Active, Restricted]
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 12
+          maxLength: 128
+    AuthSession:
+      type: object
+      additionalProperties: false
+      required: [accessToken, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+        user:
+          $ref: '#/components/schemas/PublicUser'
+    RefreshSession:
+      type: object
+      required: [id, createdAt, expiresAt, revokedAt, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+        current:
+          type: boolean
+    ChangePassword:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          minLength: 12
+          maxLength: 128
+        newPassword:
+          type: string
+          minLength: 12
+          maxLength: 128
+    PasswordChangeResult:
+      type: object
+      required: [revokedOtherSessions, accessToken, expiresIn]
+      properties:
+        revokedOtherSessions:
+          type: integer
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+    AuditLogPage:
+      type: object
+      required: [entries, nextCursor]
+      properties:
+        entries:
+          type: array
+          items:
+            type: object
+            required: [id, actorId, actorEmail, action, metadata, createdAt]
+            properties:
+              id:
+                type: string
+                format: uuid
+              actorId:
+                type: [string, 'null']
+                format: uuid
+              actorEmail:
+                type: [string, 'null']
+                format: email
+              action:
+                type: string
+              metadata: {}
+              createdAt:
+                type: string
+                format: date-time
+        nextCursor:
+          type: [string, 'null']
+          format: uuid
+    ExecutionControl:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedBy:
+          type: [string, 'null']
+          format: uuid
+    ExecutionControlUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled, reason]
+      properties:
+        enabled:
+          type: boolean
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+          pattern: '\S'
+    AggregatorControl:
+      type: object
+      required: [enabledProviders]
+      properties:
+        enabledProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvmQuoteProvider'
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedBy:
+          type: [string, 'null']
+          format: uuid
+    AggregatorControlUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabledProviders, reason]
+      properties:
+        enabledProviders:
+          type: array
+          uniqueItems: true
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/EvmQuoteProvider'
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+    EvmQuoteProvider:
+      type: string
+      enum: ['0x', '1inch', paraswap]
+    EvmAddress:
+      type: string
+      pattern: '^0x[a-fA-F0-9]{40}$'
+    SolanaAddress:
+      type: string
+      pattern: '^[1-9A-HJ-NP-Za-km-z]{32,44}$'
+    EvmAllowanceDiscoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [chainId, owner, tokenAddresses]
+      properties:
+        chainId:
+          type: string
+          enum: ['0x1', '0xa', '0x38', '0x89', '0x2105', '0xa4b1', '0xa86a']
+        owner:
+          $ref: '#/components/schemas/EvmAddress'
+        tokenAddresses:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvmAddress'
+    EvmAllowanceDiscoveryResponse:
+      type: object
+      required: [chainId, owner, scannedFromBlock, scannedToBlock, scannedBlockCount, completeHistory, approvals, asOf]
+      properties:
+        chainId:
+          type: string
+        owner:
+          $ref: '#/components/schemas/EvmAddress'
+        scannedFromBlock:
+          type: string
+        scannedToBlock:
+          type: string
+        scannedBlockCount:
+          type: integer
+        completeHistory:
+          const: false
+        approvals:
+          type: array
+          items:
+            type: object
+            required: [tokenAddress, tokenSymbol, tokenDecimals, spender, allowanceRaw, allowance, lastApprovalBlock]
+            properties:
+              tokenAddress:
+                $ref: '#/components/schemas/EvmAddress'
+              tokenSymbol:
+                type: string
+              tokenDecimals:
+                type: integer
+              spender:
+                $ref: '#/components/schemas/EvmAddress'
+              allowanceRaw:
+                type: string
+              allowance:
+                type: string
+              lastApprovalBlock:
+                type: string
+        asOf:
+          type: string
+          format: date-time
+    CrossChainPortfolioRequest:
+      type: object
+      additionalProperties: false
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [chain, chainId, address, tokenAddresses]
+            properties:
+              chain:
+                type: string
+                enum: [evm, solana]
+              chainId:
+                type: string
+                pattern: '^(?:0x(?:1|a|38|89|2105|a4b1|a86a)|mainnet-beta)$'
+              address:
+                type: string
+                pattern: '^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$'
+              tokenAddresses:
+                type: array
+                maxItems: 50
+                uniqueItems: true
+                items:
+                  $ref: '#/components/schemas/EvmAddress'
+    CrossChainPortfolioResponse:
+      type: object
+      required: [accounts, totalUsd, complete, asOf]
+      properties:
+        accounts:
+          type: array
+          items:
+            type: object
+            required: [account, available, assets, totalUsd]
+            properties:
+              account:
+                type: object
+                required: [address, chain, chainId]
+                properties:
+                  address:
+                    type: string
+                  chain:
+                    type: string
+                    enum: [evm, solana]
+                  chainId:
+                    type: string
+              available:
+                type: boolean
+              assets:
+                type: array
+                items:
+                  type: object
+                  required: [balance, priceUsd, valueUsd]
+                  properties:
+                    balance:
+                      $ref: '#/components/schemas/WalletBalance'
+                    priceUsd:
+                      type: [number, 'null']
+                    valueUsd:
+                      type: [number, 'null']
+              totalUsd:
+                type: [number, 'null']
+        totalUsd:
+          type: [number, 'null']
+        complete:
+          type: boolean
+        asOf:
+          type: string
+          format: date-time
+    WalletBalance:
+      type: object
+      required: [address, chain, asset, amount, decimals]
+      properties:
+        address:
+          type: string
+        chain:
+          type: string
+          enum: [evm, solana]
+        asset:
+          type: string
+        amount:
+          type: string
+        decimals:
+          type: integer
+        tokenAddress:
+          type: string
+        kind:
+          type: string
+          enum: [native, token]
+    EvmPortfolioPricesRequest:
+      type: object
+      additionalProperties: false
+      required: [chainId, tokenAddresses]
+      properties:
+        chainId:
+          type: string
+          enum: ['0x1', '0xa', '0x38', '0x89', '0x2105', '0xa4b1', '0xa86a']
+        tokenAddresses:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/EvmAddress'
+    SolanaPortfolioPricesRequest:
+      type: object
+      additionalProperties: false
+      required: [chainId, tokenMints]
+      properties:
+        chainId:
+          const: mainnet-beta
+        tokenMints:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/SolanaAddress'
+    PortfolioPricesResponse:
+      type: object
+      required: [chainId, nativePriceUsd, tokenPrices, source, asOf]
+      properties:
+        chainId:
+          type: string
+        nativePriceUsd:
+          type: [number, 'null']
+        tokenPrices:
+          type: array
+          items:
+            type: object
+            required: [address, priceUsd]
+            properties:
+              address:
+                type: string
+              priceUsd:
+                type: [number, 'null']
+        source:
+          const: CoinGecko
+        asOf:
+          type: string
+          format: date-time
+    EvmTokenScreeningResponse:
+      type: object
+      required: [chainId, tokenAddress, source, riskScore, riskLevel, observedSignals, totalSignals, signals, indicators, asOf, disclaimer]
+      properties:
+        chainId:
+          type: string
+        tokenAddress:
+          $ref: '#/components/schemas/EvmAddress'
+        source:
+          const: GoPlus
+        riskScore:
+          type: [number, 'null']
+        riskLevel:
+          $ref: '#/components/schemas/RiskLevel'
+        observedSignals:
+          type: integer
+        totalSignals:
+          type: integer
+        signals:
+          type: object
+          additionalProperties:
+            type: [boolean, number, 'null']
+        indicators:
+          type: array
+          items:
+            type: string
+        asOf:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+    SolanaTokenScreeningResponse:
+      type: object
+      required: [network, tokenAddress, source, riskScore, riskLevel, observedSignals, totalSignals, signals, indicators, asOf, disclaimer]
+      properties:
+        network:
+          const: solana-mainnet
+        tokenAddress:
+          $ref: '#/components/schemas/SolanaAddress'
+        source:
+          const: GoPlus Solana beta
+        riskScore:
+          type: [number, 'null']
+        riskLevel:
+          $ref: '#/components/schemas/RiskLevel'
+        observedSignals:
+          type: integer
+        totalSignals:
+          type: integer
+        signals:
+          type: object
+          additionalProperties:
+            type: [boolean, number, 'null']
+        indicators:
+          type: array
+          items:
+            type: string
+        asOf:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+    RiskLevel:
+      type: string
+      enum: [unknown, low, medium, high, critical]
+    SolanaMarketSearchResponse:
+      type: object
+      required: [query, tokens, unavailableProviders, asOf]
+      properties:
+        query:
+          type: string
+        tokens:
+          type: array
+          items:
+            type: object
+            required: [mint, name, symbol, decimals, logoUri, priceUsd, marketSpreadBps, liquidityUsd, volume24hUsd, venues, priceSource]
+            properties:
+              mint:
+                $ref: '#/components/schemas/SolanaAddress'
+              name:
+                type: string
+              symbol:
+                type: string
+              decimals:
+                type: [integer, 'null']
+              logoUri:
+                type: [string, 'null']
+              priceUsd:
+                type: [number, 'null']
+              marketSpreadBps:
+                type: [number, 'null']
+              liquidityUsd:
+                type: [number, 'null']
+              volume24hUsd:
+                type: [number, 'null']
+              venues:
+                type: array
+                items:
+                  type: string
+              priceSource:
+                oneOf:
+                  - type: string
+                    enum: [Jupiter, DEX Screener]
+                  - type: 'null'
+        unavailableProviders:
+          type: array
+          items:
+            type: string
+            enum: [Jupiter, DEX Screener]
+        asOf:
+          type: string
+          format: date-time
+    SwapQuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [chainId, sellToken, buyToken, sellAmount, sellDecimals, buyDecimals, maxSlippageBps]
+      properties:
+        chainId:
+          type: integer
+          enum: [1, 10, 56, 137, 8453, 42161, 43114]
+        sellToken:
+          $ref: '#/components/schemas/EvmAddress'
+        buyToken:
+          $ref: '#/components/schemas/EvmAddress'
+        sellAmount:
+          type: string
+          pattern: '^[1-9]\d{0,77}$'
+        sellDecimals:
+          type: integer
+          minimum: 0
+          maximum: 36
+        buyDecimals:
+          type: integer
+          minimum: 0
+          maximum: 36
+        maxSlippageBps:
+          type: integer
+          minimum: 1
+          maximum: 5000
+    SwapQuoteResponse:
+      type: object
+      required: [chainId, sellToken, buyToken, sellAmount, maxSlippageBps, routes, unavailableProviders, quotedAt]
+      properties:
+        chainId:
+          type: integer
+        sellToken:
+          type: string
+        buyToken:
+          type: string
+        sellAmount:
+          type: string
+        maxSlippageBps:
+          type: integer
+        routes:
+          type: array
+          items:
+            type: object
+            required: [provider, buyAmount, minimumBuyAmount]
+            properties:
+              provider:
+                $ref: '#/components/schemas/EvmQuoteProvider'
+              buyAmount:
+                type: string
+              minimumBuyAmount:
+                type: string
+              estimatedGas:
+                type: string
+        unavailableProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvmQuoteProvider'
+        quotedAt:
+          type: string
+          format: date-time
+    BridgeQuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [fromChainId, toChainId, fromToken, toToken, fromAmount, fromAddress, toAddress, slippageBps]
+      properties:
+        fromChainId:
+          type: integer
+          enum: [1, 10, 56, 137, 8453, 42161, 43114, 1151111081099710]
+        toChainId:
+          type: integer
+          enum: [1, 10, 56, 137, 8453, 42161, 43114, 1151111081099710]
+        fromToken:
+          type: string
+          pattern: '^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$'
+        toToken:
+          type: string
+          pattern: '^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$'
+        fromAmount:
+          type: string
+          pattern: '^[1-9]\d{0,77}$'
+        fromAddress:
+          type: string
+          pattern: '^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$'
+        toAddress:
+          type: string
+          pattern: '^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$'
+        slippageBps:
+          type: integer
+          minimum: 1
+          maximum: 500
+    BridgeQuoteResponse:
+      type: object
+      required: [provider, fromChainId, toChainId, fromToken, toToken, fromAmount, toAmount, minimumToAmount, fromTokenSymbol, toTokenSymbol, routeTool, routeToolName, estimatedDurationSeconds, costs, quotedAt, disclaimer]
+      properties:
+        provider:
+          const: LI.FI
+        fromChainId:
+          type: integer
+        toChainId:
+          type: integer
+        fromToken:
+          type: string
+        toToken:
+          type: string
+        fromAmount:
+          type: string
+        toAmount:
+          type: string
+        minimumToAmount:
+          type: string
+        fromTokenSymbol:
+          type: string
+        toTokenSymbol:
+          type: string
+        routeTool:
+          type: string
+        routeToolName:
+          type: string
+        estimatedDurationSeconds:
+          type: [integer, 'null']
+        costs:
+          type: array
+          items:
+            type: object
+            required: [kind, name, amount, tokenSymbol, amountUsd]
+            properties:
+              kind:
+                type: string
+                enum: [fee, gas]
+              name:
+                type: string
+              amount:
+                type: [string, 'null']
+              tokenSymbol:
+                type: [string, 'null']
+              amountUsd:
+                type: [string, 'null']
+        quotedAt:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+    PerpetualRiskCheckRequest:
+      type: object
+      additionalProperties: false
+      required: [side, marginMode, entryPrice, markPrice, quantity, leverage, availableMargin]
+      properties:
+        side:
+          type: string
+          enum: [long, short]
+        marginMode:
+          type: string
+          enum: [isolated, cross]
+        entryPrice:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000000000000
+        markPrice:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000000000000
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000000000
+        leverage:
+          type: integer
+          minimum: 1
+          maximum: 100
+        availableMargin:
+          type: number
+          minimum: 0
+          maximum: 1000000000000
+        takeProfit:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000000000000
+        stopLoss:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000000000000
+    PerpetualRiskCheckResponse:
+      type: object
+      required: [eligible, reason, notional, initialMargin, requiredMargin, estimatedLiquidationPrice, unrealizedPnlAtMark, maintenanceMarginAtMark]
+      properties:
+        eligible:
+          type: boolean
+        reason:
+          type: [string, 'null']
+        notional:
+          type: number
+        initialMargin:
+          type: number
+        requiredMargin:
+          type: number
+        estimatedLiquidationPrice:
+          type: number
+        unrealizedPnlAtMark:
+          type: number
+        maintenanceMarginAtMark:
+          type: number
+    EvmSwapOrderRequest:
+      allOf:
+        - $ref: '#/components/schemas/SwapQuoteRequest'
+        - type: object
+          required: [taker, idempotencyKey]
+          properties:
+            taker:
+              $ref: '#/components/schemas/EvmAddress'
+            idempotencyKey:
+              type: string
+              format: uuid
+    EvmSwapOrderResponse:
+      type: object
+      required: [executionId, chainId, taker, sellToken, buyToken, sellAmount, buyAmount, minimumBuyAmount, allowanceSpender, transaction, expiresAt]
+      properties:
+        executionId:
+          type: string
+          format: uuid
+        chainId:
+          type: integer
+        taker:
+          $ref: '#/components/schemas/EvmAddress'
+        sellToken:
+          $ref: '#/components/schemas/EvmAddress'
+        buyToken:
+          $ref: '#/components/schemas/EvmAddress'
+        sellAmount:
+          type: string
+        buyAmount:
+          type: string
+        minimumBuyAmount:
+          type: string
+        allowanceSpender:
+          $ref: '#/components/schemas/EvmAddress'
+        transaction:
+          type: object
+          required: [to, data, value]
+          properties:
+            to:
+              $ref: '#/components/schemas/EvmAddress'
+            data:
+              type: string
+            value:
+              type: string
+        expiresAt:
+          type: string
+          format: date-time
+    EvmSwapExecuteRequest:
+      type: object
+      additionalProperties: false
+      required: [executionId, transactionHash, idempotencyKey]
+      properties:
+        executionId:
+          type: string
+          format: uuid
+        transactionHash:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{64}$'
+        idempotencyKey:
+          type: string
+          format: uuid
+    EvmSwapExecuteResponse:
+      type: object
+      required: [status, transactionHash, error]
+      properties:
+        status:
+          type: string
+          enum: [processing, success, failed]
+        transactionHash:
+          type: [string, 'null']
+        error:
+          type: [string, 'null']
+    SolanaSwapOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [inputMint, outputMint, amount, taker, idempotencyKey]
+      properties:
+        inputMint:
+          $ref: '#/components/schemas/SolanaAddress'
+        outputMint:
+          $ref: '#/components/schemas/SolanaAddress'
+        amount:
+          type: string
+          pattern: '^[1-9]\d{0,19}$'
+        taker:
+          $ref: '#/components/schemas/SolanaAddress'
+        idempotencyKey:
+          type: string
+          format: uuid
+    SolanaSwapOrderResponse:
+      type: object
+      required: [executionId, requestId, transaction, inputMint, outputMint, inAmount, outAmount, minimumOutputAmount, slippageBps, prioritizationFeeLamports, router, expiresAt]
+      properties:
+        executionId:
+          type: string
+          format: uuid
+        requestId:
+          type: string
+        transaction:
+          type: string
+        inputMint:
+          $ref: '#/components/schemas/SolanaAddress'
+        outputMint:
+          $ref: '#/components/schemas/SolanaAddress'
+        inAmount:
+          type: string
+        outAmount:
+          type: string
+        minimumOutputAmount:
+          type: string
+        slippageBps:
+          type: integer
+        prioritizationFeeLamports:
+          type: [integer, 'null']
+        router:
+          type: [string, 'null']
+        expiresAt:
+          type: string
+          format: date-time
+    SolanaSwapExecuteRequest:
+      type: object
+      additionalProperties: false
+      required: [executionId, requestId, signedTransaction, idempotencyKey]
+      properties:
+        executionId:
+          type: string
+          format: uuid
+        requestId:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+        signedTransaction:
+          type: string
+          minLength: 4
+          maxLength: 1644
+          pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$'
+        idempotencyKey:
+          type: string
+          format: uuid
+    SolanaSwapExecuteResponse:
+      type: object
+      required: [status, signature, error]
+      properties:
+        status:
+          type: string
+          enum: [processing, success, failed]
+        signature:
+          type: [string, 'null']
+        error:
+          type: [string, 'null']
