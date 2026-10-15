@@ -2,7 +2,9 @@
 
 The NestJS API uses the `/api` global prefix. Unless a route is marked public, it requires a valid access-token bearer credential. Role guards are hierarchical: a minimum role includes higher roles. Request DTOs are validated globally; unknown fields are rejected.
 
-The default throttle is 120 requests per 60 seconds. Route-specific limits below override it where shown. Health routes skip throttling and geographic access. The API does not expose a generated OpenAPI/Swagger document in this release candidate.
+The default throttle is 120 requests per 60 seconds. Route-specific limits below override it where shown. Health routes skip throttling and geographic access. The OpenAPI 3.1 contract is maintained in [`../openapi/openapi.yaml`](../openapi/openapi.yaml); its generated typed SDK and Zod validation schemas are in `packages/api-client`.
+
+Run `npm run openapi:generate` after changing the contract. `npm run openapi:check` verifies that every NestJS controller route has exactly one contract operation and that the checked-in SDK generation is current. Import `@next/api-client` to use its generated `api`, `createApiClient(baseUrl)` factory, and `schemas` object. The client validates requests and responses using schemas generated from the OpenAPI contract.
 
 ## Routes
 

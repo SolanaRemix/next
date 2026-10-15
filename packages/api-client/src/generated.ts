@@ -77,11 +77,28 @@ const HealthStatus = z
   .object({ status: z.string(), checks: z.record(z.string()) })
   .partial()
   .passthrough();
-const AuditLogPage = z.object({}).partial().passthrough();
+const AuditLogPage = z
+  .object({
+    entries: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          actorId: z.union([z.string(), z.null()]),
+          actorEmail: z.union([z.string(), z.null()]),
+          action: z.string(),
+          metadata: z.unknown(),
+          createdAt: z.string().datetime({ offset: true }),
+        })
+        .passthrough()
+    ),
+    nextCursor: z.union([z.string(), z.null()]),
+  })
+  .passthrough();
 const ExecutionControl = z
   .object({
     enabled: z.boolean(),
-    updatedAt: z.string().datetime({ offset: true }).optional(),
+    updatedAt: z.union([z.string(), z.null()]).optional(),
+    updatedBy: z.union([z.string(), z.null()]).optional(),
   })
   .passthrough();
 const ExecutionControlUpdate = z.object({
@@ -90,7 +107,11 @@ const ExecutionControlUpdate = z.object({
 });
 const EvmQuoteProvider = z.enum(["0x", "1inch", "paraswap"]);
 const AggregatorControl = z
-  .object({ enabledProviders: z.array(EvmQuoteProvider) })
+  .object({
+    enabledProviders: z.array(EvmQuoteProvider),
+    updatedAt: z.union([z.string(), z.null()]).optional(),
+    updatedBy: z.union([z.string(), z.null()]).optional(),
+  })
   .passthrough();
 const AggregatorControlUpdate = z.object({
   enabledProviders: z.array(EvmQuoteProvider).max(3),
@@ -578,7 +599,7 @@ const endpoints = makeApi([
         schema: z.string().min(1).max(120).optional(),
       },
     ],
-    response: z.object({}).partial().passthrough(),
+    response: AuditLogPage,
   },
   {
     method: "get",
@@ -922,7 +943,7 @@ const endpoints = makeApi([
       {
         name: "query",
         type: "Query",
-        schema: z.string().min(1).max(128),
+        schema: z.string().min(2).max(32),
       },
     ],
     response: SolanaMarketSearchResponse,
@@ -1034,7 +1055,11 @@ const endpoints = makeApi([
       {
         name: "chainId",
         type: "Query",
-        schema: z.enum(["1", "10", "56", "137", "8453", "42161", "43114"]),
+        schema: z
+          .string()
+          .regex(
+            /^(?:1|10|56|137|8453|42161|43114|0[xX](?:1|[aA]|38|89|2105|[aA]4b1|[aA]86[aA]))$/
+          ),
       },
       {
         name: "tokenAddress",

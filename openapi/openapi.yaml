@@ -479,7 +479,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: ['1', '10', '56', '137', '8453', '42161', '43114']
+            pattern: '^(?:1|10|56|137|8453|42161|43114|0[xX](?:1|[aA]|38|89|2105|[aA]4b1|[aA]86[aA]))$'
         - name: tokenAddress
           in: query
           required: true
@@ -521,8 +521,8 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 128
+            minLength: 2
+            maxLength: 32
       responses:
         '200':
           description: Indicative Solana token and venue data.
@@ -690,13 +690,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-    refreshCookie:
-      type: apiKey
-      in: cookie
-      name: next_refresh
   parameters:
     RefreshCookie:
-      name: next_refresh
+      name: refresh_token
       in: cookie
       required: false
       schema:
@@ -877,7 +873,32 @@ components:
             type: string
     AuditLogPage:
       type: object
-      additionalProperties: true
+      required: [entries, nextCursor]
+      properties:
+        entries:
+          type: array
+          items:
+            type: object
+            required: [id, actorId, actorEmail, action, metadata, createdAt]
+            properties:
+              id:
+                type: string
+                format: uuid
+              actorId:
+                type: [string, 'null']
+                format: uuid
+              actorEmail:
+                type: [string, 'null']
+                format: email
+              action:
+                type: string
+              metadata: {}
+              createdAt:
+                type: string
+                format: date-time
+        nextCursor:
+          type: [string, 'null']
+          format: uuid
     ExecutionControl:
       type: object
       required: [enabled]
@@ -885,8 +906,11 @@ components:
         enabled:
           type: boolean
         updatedAt:
-          type: string
+          type: [string, 'null']
           format: date-time
+        updatedBy:
+          type: [string, 'null']
+          format: uuid
     ExecutionControlUpdate:
       type: object
       additionalProperties: false
@@ -907,6 +931,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EvmQuoteProvider'
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+        updatedBy:
+          type: [string, 'null']
+          format: uuid
     AggregatorControlUpdate:
       type: object
       additionalProperties: false
