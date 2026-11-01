@@ -12,13 +12,13 @@
     }
   },
   "scripts": {
-    "generate": "openapi-zod-client ../../openapi/openapi.yaml --output src/generated.ts --with-alias --export-schemas --default-status auto-correct",
+    "generate": "openapi-zod-client ../../openapi/openapi.yaml --output src/generated.ts --with-alias --export-schemas --default-status auto-correct && node ../../scripts/normalize-zod-record-schemas.mjs src/generated.ts",
     "build": "tsc -b",
     "test": "vitest run"
   },
   "dependencies": {
     "@zodios/core": "10.9.6",
     "axios": "1.20.0",
-    "zod": "3.25.76"
+    "zod": "4.6.7"
   }
 }

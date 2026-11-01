@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { parse } from 'yaml';
+import { normalizeZodRecordSchemas } from './normalize-zod-record-schemas.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const specPath = join(root, 'openapi/openapi.yaml');
@@ -148,7 +149,10 @@ try {
     ],
     { cwd: root, stdio: 'inherit' },
   );
-  if (readFileSync(generatedOutput, 'utf8') !== readFileSync(generatedPath, 'utf8')) {
+  if (
+    normalizeZodRecordSchemas(readFileSync(generatedOutput, 'utf8'))
+    !== readFileSync(generatedPath, 'utf8')
+  ) {
     throw new Error('Generated API client is stale. Run `npm run openapi:generate` and commit the result.');
   }
 } finally {
