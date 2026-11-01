@@ -68,7 +68,7 @@ const updateUserStatus_Body = z.object({
   ]),
 });
 const HealthStatus = z
-  .object({ status: z.string(), checks: z.record(z.string()) })
+  .object({ status: z.string(), checks: z.record(z.string(), z.string()) })
   .partial()
   .passthrough();
 const AuditLogPage = z
@@ -235,7 +235,7 @@ const EvmTokenScreeningResponse = z
     riskLevel: RiskLevel,
     observedSignals: z.number().int(),
     totalSignals: z.number().int(),
-    signals: z.record(z.union([z.boolean(), z.number(), z.null()])),
+    signals: z.record(z.string(), z.union([z.boolean(), z.number(), z.null()])),
     indicators: z.array(z.string()),
     asOf: z.string().datetime({ offset: true }),
     disclaimer: z.string(),
@@ -250,7 +250,7 @@ const SolanaTokenScreeningResponse = z
     riskLevel: RiskLevel,
     observedSignals: z.number().int(),
     totalSignals: z.number().int(),
-    signals: z.record(z.union([z.boolean(), z.number(), z.null()])),
+    signals: z.record(z.string(), z.union([z.boolean(), z.number(), z.null()])),
     indicators: z.array(z.string()),
     asOf: z.string().datetime({ offset: true }),
     disclaimer: z.string(),
